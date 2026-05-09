@@ -8,11 +8,15 @@ from typing import Optional
 
 import typer
 import yaml
+from dotenv import load_dotenv
 
 from agc.core.agent import AgentConfig
 from agc.core.chatroom import ChatRoom
 from agc.core.human_in_loop import HumanInTheLoop, HumanMode
 from agc.tools.search import create_search_tool
+
+# 启动时加载 .env 文件
+load_dotenv()
 
 app = typer.Typer(
     name="agc",
