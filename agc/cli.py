@@ -39,22 +39,19 @@ def _build_agents(config: dict) -> list[AgentConfig]:
     return agents
 
 
-def _setup_tools(tools_str: str, search_provider: str) -> tuple[list[str], dict]:
-    """初始化工具"""
+def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
+    """初始化搜索工具（如果显式指定）
+
+    注意：web_fetch, workspace, memory 工具由 ChatRoom 自动注册，
+    这里只处理搜索工具的显式指定和后端注册。
+    """
     tool_names = [t.strip() for t in tools_str.split(",") if t.strip()] if tools_str else []
+
     for name in tool_names:
         if name == "web_search":
             create_search_tool(provider=search_provider)
-            # web_search 和 web_fetch 成对出现
-            if "web_fetch" not in tool_names:
-                tool_names.append("web_fetch")
 
-    # web_fetch 总是可以注册（无需API Key）
-    if "web_fetch" in tool_names:
-        from agc.tools.web_fetch import register_web_fetch_tool
-        register_web_fetch_tool()
-
-    return tool_names, {}
+    return tool_names
 
 
 @app.command()
@@ -75,7 +72,7 @@ def chat(
         None, "--api-key", "-k", help="API Key(也可用OPENAI_API_KEY环境变量)"
     ),
     tools: Optional[str] = typer.Option(
-        None, "--tools", "-t", help="启用的工具(逗号分隔)，如: web_search"
+        None, "--tools", "-t", help="额外启用的工具(逗号分隔)，如: web_search。其他工具自动注册。"
     ),
     search: str = typer.Option(
         "auto", "--search", help="搜索后端: auto / serper / tavily / duckduckgo"
@@ -93,8 +90,8 @@ def chat(
 ):
     """启动一个多Agent群聊讨论"""
 
-    # 初始化工具
-    tool_names, _ = _setup_tools(tools or "", search)
+    # 初始化工具（搜索后端等显式指定项）
+    tool_names = _setup_tools(tools, search)
 
     # 构建agents
     if config and config.exists():
@@ -106,7 +103,7 @@ def chat(
         base_url = cfg.get("base_url", base_url)
         api_key = cfg.get("api_key", api_key)
         if not tool_names and "tools" in cfg:
-            tool_names, _ = _setup_tools(",".join(cfg["tools"]), search)
+            tool_names = _setup_tools(",".join(cfg["tools"]), search)
         # 从配置读human和workspace
         if human == "off":
             human = cfg.get("human", "off")
@@ -194,7 +191,7 @@ def tools_list():
     from agc.tools.base import list_tools
     available = list_tools()
     if not available:
-        typer.echo("暂无已注册工具。使用 agc chat --tools web_search 启用搜索工具。")
+        typer.echo("暂无已注册工具。工具会在启动群聊时自动注册。")
     else:
         for name, desc in available.items():
             typer.echo(f"  {name}: {desc}")

@@ -97,25 +97,11 @@ class ChatRoom:
         # ── 人类参与 ─────────────────────────────────────
         self._human: HumanInTheLoop | None = human
 
-        # ── 工具配置 ──────────────────────────────────────
+# ── 工具配置 ──────────────────────────────────────
         self._enabled_tools: list[str] = list(tools or [])
 
-        # 如果有工作空间，自动注册工作区工具
-        if self._workspace_mgr:
-            from agc.tools.workspace import register_workspace_tools
-            ws_tool_names = register_workspace_tools(self._workspace_mgr)
-            for tn in ws_tool_names:
-                if tn not in self._enabled_tools:
-                    self._enabled_tools.append(tn)
-
-            # 有工作空间就自动注册记忆工具（纯本地，无需API Key）
-            from agc.tools.memory import register_memory_tools
-            mem_tool_names = register_memory_tools(self._workspace_mgr)
-            for tn in mem_tool_names:
-                if tn not in self._enabled_tools:
-                    self._enabled_tools.append(tn)
-
-        self._tool_schemas: list[dict] = get_schemas_for_tools(self._enabled_tools)
+        # 自动注册无需API Key的通用工具
+        self._auto_register_tools()
 
         # ── LLM客户端 ────────────────────────────────────
         self._llm_clients: dict[str, LLMBase] = {}
@@ -255,36 +241,100 @@ class ChatRoom:
             stop_reason=self.history[-1].content if self.history else "",
         )
 
-    def _build_workspace_prompts(self) -> dict[str, str]:
-        """为每个agent构建工作空间相关的system prompt补充"""
-        if not self._workspace_mgr:
-            return {}
+    def _auto_register_tools(self):
+        """自动注册所有可用的工具（无需手动配置）
 
+        规则：
+        - web_fetch: 始终注册（纯HTTP，无需Key）
+        - web_search: 尝试自动检测可用后端
+        - workspace/memory: 有工作空间时自动注册
+        """
+        # 1. web_fetch 始终可用
+        if "web_fetch" not in self._enabled_tools:
+            from agc.tools.web_fetch import register_web_fetch_tool
+            register_web_fetch_tool()
+            self._enabled_tools.append("web_fetch")
+            logger.info("自动注册工具: web_fetch")
+
+        # 2. web_search: 如果在 tools 列表中或检测到可用后端
+        if "web_search" in self._enabled_tools:
+            # 已由 CLI 显式指定，确保后端已注册
+            pass
+        else:
+            # 自动检测可用搜索后端
+            try:
+                from agc.tools.search import create_search_tool
+                tool = create_search_tool(provider="auto")
+                if tool is not None:
+                    self._enabled_tools.append("web_search")
+                    logger.info("自动注册工具: web_search (检测到可用后端)")
+            except Exception:
+                logger.debug("无可用的搜索后端，跳过 web_search")
+
+        # 3. 工作空间 + 记忆工具
+        if self._workspace_mgr:
+            from agc.tools.workspace import register_workspace_tools
+            ws_tool_names = register_workspace_tools(self._workspace_mgr)
+            for tn in ws_tool_names:
+                if tn not in self._enabled_tools:
+                    self._enabled_tools.append(tn)
+            logger.info(f"自动注册工作区工具: {ws_tool_names}")
+
+            from agc.tools.memory import register_memory_tools
+            mem_tool_names = register_memory_tools(self._workspace_mgr)
+            for tn in mem_tool_names:
+                if tn not in self._enabled_tools:
+                    self._enabled_tools.append(tn)
+            logger.info(f"自动注册记忆工具: {mem_tool_names}")
+
+        # 4. 构建 schema
+        self._tool_schemas: list[dict] = get_schemas_for_tools(self._enabled_tools)
+
+    def _build_workspace_prompts(self) -> dict[str, str]:
+        """为每个agent构建工具使用相关system prompt补充"""
         prompts = {}
         for agent in self.config.agents:
-            lines = [
-                f"\n## 你的工作空间",
-                f"你有独立的工作空间目录: {self._workspace_mgr.get(agent.name).path}",
-                f"你可以用以下工具管理你的工作空间：",
-                f"- write_file: 写入文件",
-                f"- read_file: 读取文件（也可以读取其他agent的文件）",
-                f"- list_files: 列出文件目录",
-                f"- run_code: 执行shell命令",
-                f"",
-                f"建议：分析问题后，把关键发现或代码写入工作空间文件，方便其他agent参考。",
-                f"其他agent可以通过 read_file(owner='你的名字', filepath=...) 读取你的文件。",
-                f"",
-                f"## 你的记忆",
-                f"你有专属的记忆工具，用于保存和检索关键信息：",
-                f"- save_memory: 保存重要事实、结论、决策依据",
-                f"- recall_memory: 搜索之前保存的记忆",
-                f"- list_memories: 列出所有记忆",
-                f"- delete_memory: 删除不再需要的记忆",
-                f"",
-                f"重要：当你发现关键事实或做出重要结论时，立即用 save_memory 保存，",
-                f"避免后续重复研究。讨论中需要引用之前的信息时，用 recall_memory 查找。",
-            ]
-            prompts[agent.name] = "\n".join(lines)
+            lines = []
+
+            # 工作空间提示
+            if self._workspace_mgr:
+                lines.extend([
+                    f"\n## 你的工作空间",
+                    f"你有独立的工作空间目录: {self._workspace_mgr.get(agent.name).path}",
+                    f"你可以用以下工具管理你的工作空间：",
+                    f"- write_file: 写入文件",
+                    f"- read_file: 读取文件（也可以读取其他agent的文件）",
+                    f"- list_files: 列出文件目录",
+                    f"- run_code: 执行shell命令",
+                    f"",
+                    f"建议：分析问题后，把关键发现或代码写入工作空间文件，方便其他agent参考。",
+                    f"其他agent可以通过 read_file(owner='你的名字', filepath=...) 读取你的文件。",
+                    f"",
+                    f"## 你的记忆",
+                    f"你有专属的记忆工具，用于保存和检索关键信息：",
+                    f"- save_memory: 保存重要事实、结论、决策依据",
+                    f"- recall_memory: 搜索之前保存的记忆",
+                    f"- list_memories: 列出所有记忆",
+                    f"- delete_memory: 删除不再需要的记忆",
+                    f"",
+                    f"重要：当你发现关键事实或做出重要结论时，立即用 save_memory 保存，",
+                    f"避免后续重复研究。讨论中需要引用之前的信息时，用 recall_memory 查找。",
+                ])
+
+            # web工具提示
+            web_tools = [t for t in self._enabled_tools if t.startswith("web_")]
+            if web_tools:
+                lines.extend([
+                    f"\n## 网络工具",
+                    f"你可以使用以下网络工具搜索和获取信息：",
+                    f"- web_search: 搜索互联网（如果已启用）",
+                    f"- web_fetch: 抓取网页全文，深入了解搜索结果中的页面",
+                    f"",
+                    f"建议：先用 web_search 找到相关链接，再用 web_fetch 阅读具体页面获取细节。",
+                ])
+
+            if lines:
+                prompts[agent.name] = "\n".join(lines)
         return prompts
 
     def _generate_response(self, agent: AgentConfig, topic: str) -> tuple[list[Message], int]:
