@@ -76,7 +76,7 @@ class ContextManager:
         # tool_call 消息会在 _generate_response 的循环中单独处理，这里只保留 chat/mention/system/summary/tool_result
         filtered = [
             m for m in history
-            if m.msg_type in (MessageType.chat, MessageType.mention, MessageType.system, MessageType.summary, MessageType.tool_result, MessageType.human_input)
+            if m.msg_type in (MessageType.chat, MessageType.mention, MessageType.system, MessageType.summary, MessageType.tool_call, MessageType.tool_result, MessageType.human_input)
         ]
 
         if len(filtered) <= self.recent_window:

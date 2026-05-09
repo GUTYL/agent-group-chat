@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Callable
 
 from agc.core.agent import AgentConfig
 from agc.core.context import ContextManager
@@ -57,6 +58,7 @@ class ChatRoom:
         tools: list[str] | None = None,
         workspace_root: str | None = None,
         human: HumanInTheLoop | None = None,
+        stream: bool = True,
     ):
         """
         Args:
@@ -72,6 +74,7 @@ class ChatRoom:
             tools: 启用的工具名列表
             workspace_root: 工作空间根目录（None=不使用工作空间）
             human: 人类参与模块（None=不参与）
+            stream: 是否启用流式输出
         """
         self.config = RoomConfig(
             name=name,
@@ -143,10 +146,31 @@ class ChatRoom:
 
         # 回调钩子
         self._on_message_callbacks: list = []
+        self._on_chunk_callbacks: list[Callable[[str], None]] = []
+        self._on_speaker_callbacks: list[Callable[[str], None]] = []
+
+        # 流式输出
+        self._stream = stream
 
     def on_message(self, callback):
         """注册消息回调"""
         self._on_message_callbacks.append(callback)
+
+    def on_chunk(self, callback: Callable[[str], None]):
+        """注册流式输出回调"""
+        self._on_chunk_callbacks.append(callback)
+
+    def on_speaker_start(self, callback: Callable[[str], None]):
+        """注册发言人开始回调（流式输出前）"""
+        self._on_speaker_callbacks.append(callback)
+
+    def _emit_chunk(self, text: str):
+        for cb in self._on_chunk_callbacks:
+            cb(text)
+
+    def _emit_speaker_start(self, name: str):
+        for cb in self._on_speaker_callbacks:
+            cb(name)
 
     def chat(self, topic: str) -> ChatResult:
         """启动群聊讨论"""
@@ -186,6 +210,7 @@ class ChatRoom:
                 continue
 
             # 调用LLM生成回复（含工具调用循环）
+            self._emit_speaker_start(speaker.name)
             messages, tokens = self._generate_response(speaker, topic)
             for msg in messages:
                 self.history.append(msg)
@@ -264,7 +289,7 @@ class ChatRoom:
             # 自动检测可用搜索后端
             try:
                 from agc.tools.search import create_search_tool
-                tool = create_search_tool(provider="auto")
+                tool = create_search_tool(provider="duckduckgo")
                 if tool is not None:
                     self._enabled_tools.append("web_search")
                     logger.info("自动注册工具: web_search (检测到可用后端)")
@@ -360,6 +385,7 @@ class ChatRoom:
                 model=agent.model,
                 temperature=agent.temperature,
                 tools=agent_tools or None,
+                on_chunk=self._emit_chunk if self._stream else None,
             )
             total_tokens += response.total_tokens
 
@@ -370,6 +396,7 @@ class ChatRoom:
                     msg_type=MessageType.tool_call,
                     round_idx=round_idx,
                     tool_calls=response.tool_calls,
+                    reasoning_content=response.reasoning_content,
                     metadata={"tokens": response.total_tokens, "model": response.model},
                 )
                 result_messages.append(assistant_msg)
@@ -406,6 +433,7 @@ class ChatRoom:
                     msg_type=MessageType.mention if mentions else MessageType.chat,
                     mentions=mentions,
                     round_idx=round_idx,
+                    reasoning_content=response.reasoning_content,
                     metadata={
                         "tokens": response.total_tokens,
                         "model": response.model,

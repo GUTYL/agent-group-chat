@@ -64,7 +64,7 @@ def chat(
         "hybrid", "--scheduler", "-s", help="调度策略: round_robin / hybrid"
     ),
     max_rounds: int = typer.Option(20, "--max-rounds", "-r", help="最大轮数"),
-    model: str = typer.Option("gpt-4o", "--model", "-m", help="默认LLM模型"),
+    model: str = typer.Option(os.environ.get("OPENAI_MODEL", "gpt-4o"), "--model", "-m", help="默认LLM模型"),
     base_url: Optional[str] = typer.Option(
         None, "--base-url", "-b", help="LLM API端点(如 https://api.deepseek.com/v1)"
     ),
@@ -75,7 +75,7 @@ def chat(
         None, "--tools", "-t", help="额外启用的工具(逗号分隔)，如: web_search。其他工具自动注册。"
     ),
     search: str = typer.Option(
-        "auto", "--search", help="搜索后端: auto / serper / tavily / duckduckgo"
+        "duckduckgo", "--search", help="搜索后端: duckduckgo"
     ),
     workspace: Optional[str] = typer.Option(
         None, "--workspace", "-w", help="工作空间目录(默认: ./data/workspaces)"
@@ -166,6 +166,8 @@ def chat(
     from agc.ui import CliDisplay
     display = CliDisplay()
     room.on_message(display.on_message)
+    room.on_chunk(display.on_chunk)
+    room.on_speaker_start(display.begin_stream)
     display.print_header(topic, agents, human_loop=human_loop)
 
     # 开始讨论！

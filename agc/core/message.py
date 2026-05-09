@@ -33,6 +33,7 @@ class Message(BaseModel):
     metadata: dict = {}          # 扩展字段（token数等）
     tool_calls: list[dict] = []  # OpenAI tool_calls 格式
     tool_call_id: str = ""       # 工具调用ID（tool_result消息用）
+    reasoning_content: str = ""  # DeepSeek等thinking模型的推理内容（需回传）
 
     @property
     def is_system(self) -> bool:
@@ -62,15 +63,16 @@ class Message(BaseModel):
         prefix = f"[{self.sender}]" if not self.is_system else "[System]"
 
         if self.msg_type == MessageType.tool_call and self.tool_calls:
-            # 工具调用消息：role=assistant，带 tool_calls
-            return {
+            msg = {
                 "role": "assistant",
                 "content": self.content or None,
                 "tool_calls": self.tool_calls,
             }
+            if self.reasoning_content:
+                msg["reasoning_content"] = self.reasoning_content
+            return msg
 
         if self.msg_type == MessageType.tool_result:
-            # 工具结果消息：role=tool
             return {
                 "role": "tool",
                 "tool_call_id": self.tool_call_id,
@@ -78,13 +80,16 @@ class Message(BaseModel):
             }
 
         if self.msg_type == MessageType.human_input:
-            # 人类输入消息：role=user
             return {
                 "role": "user",
                 "content": f"[{self.sender}]: {self.content}",
             }
 
-        return {
+        msg = {
             "role": role if self.is_system else "user",
             "content": f"{prefix}: {self.content}",
         }
+        if not self.is_system and self.reasoning_content:
+            msg["role"] = "assistant"
+            msg["reasoning_content"] = self.reasoning_content
+        return msg

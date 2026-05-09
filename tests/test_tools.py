@@ -3,7 +3,7 @@
 import json
 
 from agc.tools.base import ToolResult, execute_tool_call, get_tool, list_tools, register_tool
-from agc.tools.search import DuckDuckGoSearchTool, SerperSearchTool, TavilySearchTool, create_search_tool
+from agc.tools.search import DuckDuckGoSearchTool, create_search_tool
 
 
 def test_duckduckgo_schema():
@@ -21,18 +21,6 @@ def test_duckduckgo_always_available():
     """DuckDuckGo不需要API key，始终可用"""
     tool = DuckDuckGoSearchTool()
     assert tool.available is True
-
-
-def test_serper_not_available_without_key():
-    """Serper没有API key时不可用"""
-    tool = SerperSearchTool(api_key="")
-    assert tool.available is False
-
-
-def test_tavily_not_available_without_key():
-    """Tavily没有API key时不可用"""
-    tool = TavilySearchTool(api_key="")
-    assert tool.available is False
 
 
 def test_create_search_tool_duckduckgo():

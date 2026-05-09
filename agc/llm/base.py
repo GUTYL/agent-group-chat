@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass
@@ -17,6 +18,7 @@ class LLMResponse:
     finish_reason: str = ""                  # 结束原因
     metadata: dict = field(default_factory=dict)  # 扩展字段
     tool_calls: list[dict] | None = None    # OpenAI格式 tool_calls（None=没调用工具）
+    reasoning_content: str = ""             # DeepSeek等thinking模型的推理内容
 
     @property
     def total_tokens(self) -> int:
@@ -39,6 +41,7 @@ class LLMBase(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """发送聊天请求，返回响应
 
@@ -48,6 +51,7 @@ class LLMBase(ABC):
             temperature: 温度
             max_tokens: 最大输出token
             tools: OpenAI function calling schema 列表
+            on_chunk: 流式输出回调，接收增量文本
         """
         ...
 

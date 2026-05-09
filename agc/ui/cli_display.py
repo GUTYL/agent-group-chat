@@ -41,6 +41,8 @@ class CliDisplay:
         self.console = Console(theme=AGC_THEME)
         self._agent_color_map: dict[str, str] = {}
         self._color_idx = 0
+        self._streaming = False
+        self._pending_speaker: str | None = None
 
     def _get_agent_color(self, name: str) -> str:
         if name not in self._agent_color_map:
@@ -50,22 +52,37 @@ class CliDisplay:
             self._color_idx += 1
         return self._agent_color_map[name]
 
+    def begin_stream(self, agent_name: str) -> None:
+        """标记即将发言的agent，延迟到第一个文本chunk时显示"""
+        self._pending_speaker = agent_name
+
+    def on_chunk(self, text: str) -> None:
+        """流式输出回调"""
+        if self._pending_speaker:
+            color = self._get_agent_color(self._pending_speaker)
+            self.console.print()
+            self.console.print(f"[bold {color}]{self._pending_speaker}[/bold {color}] → ", end="")
+            self._pending_speaker = None
+            self._streaming = True
+        if self._streaming:
+            self.console.print(text, end="", highlight=False)
+
     def on_message(self, message: Message) -> None:
         """回调：实时打印新消息"""
         if message.msg_type == MessageType.system:
             self._print_system(message)
         elif message.msg_type == MessageType.summary:
             self._print_summary(message)
-        elif message.msg_type == MessageType.mention:
-            self._print_mention(message)
         elif message.msg_type == MessageType.tool_call:
             self._print_tool_call(message)
         elif message.msg_type == MessageType.tool_result:
             self._print_tool_result(message)
         elif message.msg_type == MessageType.human_input:
             self._print_human_input(message)
+        elif message.msg_type in (MessageType.chat, MessageType.mention):
+            self._print_chat_mention(message)
         else:
-            self._print_chat(message)
+            self._print_chat_mention(message)
 
     def print_header(self, topic: str, agents: list, human_loop=None) -> None:
         """打印群聊开始信息"""
@@ -102,18 +119,23 @@ class CliDisplay:
         )
         self.console.print(f"[dim]{stats}[/dim]")
 
-    def _print_chat(self, msg: Message) -> None:
-        color = self._get_agent_color(msg.sender)
-        prefix = f"[bold {color}]{msg.sender}[/bold {color}]"
-        self.console.print(f"{prefix}: {msg.content}")
-        self.console.print()
+    def _print_chat_mention(self, msg: Message) -> None:
+        if self._streaming:
+            # 流式输出已完成，只打印收尾换行
+            self.console.print()
+            self._streaming = False
+            if msg.mentions:
+                mentions_str = " ".join(f"[bold yellow]@{m}[/bold yellow]" for m in msg.mentions)
+                self.console.print(f"  → {mentions_str}")
+            return
 
-    def _print_mention(self, msg: Message) -> None:
         color = self._get_agent_color(msg.sender)
-        mentions_str = " ".join(f"[bold yellow]@{m}[/bold yellow]" for m in msg.mentions)
-        prefix = f"[bold {color}]{msg.sender}[/bold {color}] → {mentions_str}"
-        self.console.print(f"{prefix}")
-        self.console.print(f"  {msg.content}")
+        if msg.mentions:
+            mentions_str = " ".join(f"[bold yellow]@{m}[/bold yellow]" for m in msg.mentions)
+            self.console.print(f"[bold {color}]{msg.sender}[/bold {color}] → {mentions_str}")
+        else:
+            self.console.print(f"[bold {color}]{msg.sender}[/bold {color}]:")
+        self.console.print(msg.content)
         self.console.print()
 
     def _print_system(self, msg: Message) -> None:
