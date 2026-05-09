@@ -1,0 +1,42 @@
+# YAML配置文件示例 — 用配置文件定义群聊
+# 使用方式: agc chat "讨论话题" --config 03_yaml_config.yaml
+
+# 全局默认LLM配置
+model: gpt-4o
+base_url: https://api.openai.com/v1
+# api_key: sk-xxx
+
+scheduler: hybrid
+max_rounds: 15
+
+# 全局启用工具
+tools:
+  - web_search
+
+# 搜索后端: auto / serper / tavily / duckduckgo
+search: duckduckgo
+
+# 工作空间（每个agent独立目录）
+workspace: ./data/workspaces
+
+# 人类介入模式: off / always / on_demand
+human: always
+human_name: 主持人
+
+agents:
+  - name: researcher
+    role: 资深研究员
+    goal: 深入调研问题，提供信息支撑
+    backstory: 你擅长搜索事实、数据佐证，不凭直觉下结论。
+    tools:
+      - web_search
+
+  - name: architect
+    role: 系统架构师
+    goal: 设计方案，评估可行性
+    backstory: 你有10年架构经验，善于权衡取舍，倾向简洁可靠的方案。
+
+  - name: reviewer
+    role: 魔鬼代言人
+    goal: 质疑和验证结论
+    backstory: 你天生怀疑一切，总是找反例和漏洞。
