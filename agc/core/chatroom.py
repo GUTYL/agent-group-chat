@@ -108,6 +108,13 @@ class ChatRoom:
                 if tn not in self._enabled_tools:
                     self._enabled_tools.append(tn)
 
+            # 有工作空间就自动注册记忆工具（纯本地，无需API Key）
+            from agc.tools.memory import register_memory_tools
+            mem_tool_names = register_memory_tools(self._workspace_mgr)
+            for tn in mem_tool_names:
+                if tn not in self._enabled_tools:
+                    self._enabled_tools.append(tn)
+
         self._tool_schemas: list[dict] = get_schemas_for_tools(self._enabled_tools)
 
         # ── LLM客户端 ────────────────────────────────────
@@ -266,6 +273,16 @@ class ChatRoom:
                 f"",
                 f"建议：分析问题后，把关键发现或代码写入工作空间文件，方便其他agent参考。",
                 f"其他agent可以通过 read_file(owner='你的名字', filepath=...) 读取你的文件。",
+                f"",
+                f"## 你的记忆",
+                f"你有专属的记忆工具，用于保存和检索关键信息：",
+                f"- save_memory: 保存重要事实、结论、决策依据",
+                f"- recall_memory: 搜索之前保存的记忆",
+                f"- list_memories: 列出所有记忆",
+                f"- delete_memory: 删除不再需要的记忆",
+                f"",
+                f"重要：当你发现关键事实或做出重要结论时，立即用 save_memory 保存，",
+                f"避免后续重复研究。讨论中需要引用之前的信息时，用 recall_memory 查找。",
             ]
             prompts[agent.name] = "\n".join(lines)
         return prompts
