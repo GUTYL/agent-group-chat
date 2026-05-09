@@ -4,6 +4,7 @@ from .base import ToolBase, ToolResult, register_tool, get_tool, list_tools, get
 from .search import create_search_tool
 from .workspace import register_workspace_tools
 from .memory import register_memory_tools
+from .web_fetch import WebFetchTool, register_web_fetch_tool
 
 __all__ = [
     "ToolBase",
@@ -16,4 +17,5 @@ __all__ = [
     "create_search_tool",
     "register_workspace_tools",
     "register_memory_tools",
+    "register_web_fetch_tool",
 ]

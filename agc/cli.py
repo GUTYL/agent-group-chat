@@ -45,6 +45,15 @@ def _setup_tools(tools_str: str, search_provider: str) -> tuple[list[str], dict]
     for name in tool_names:
         if name == "web_search":
             create_search_tool(provider=search_provider)
+            # web_search 和 web_fetch 成对出现
+            if "web_fetch" not in tool_names:
+                tool_names.append("web_fetch")
+
+    # web_fetch 总是可以注册（无需API Key）
+    if "web_fetch" in tool_names:
+        from agc.tools.web_fetch import register_web_fetch_tool
+        register_web_fetch_tool()
+
     return tool_names, {}
 
 
