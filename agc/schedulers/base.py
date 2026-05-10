@@ -24,5 +24,12 @@ class SchedulerBase(ABC):
         """选择下一个发言的Agent"""
         ...
 
+    def plan_responses(self, history: list[Message]) -> list[AgentConfig]:
+        """为FreeChat模式决定哪些agent应该回应（默认：使用next_speaker）"""
+        if not history:
+            return []
+        round_idx = len(history)
+        return [self.next_speaker(history, round_idx)]
+
     def get_agent(self, name: str) -> AgentConfig | None:
         return self.agent_map.get(name)
