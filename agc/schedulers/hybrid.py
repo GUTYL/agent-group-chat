@@ -142,23 +142,25 @@ class HybridScheduler(SchedulerBase):
         recent = history[-4:]
         recent_text = "\n".join(f"[{m.sender}]: {m.content[:200]}" for m in recent)
 
-        prompt = f"""基于对话选择最合适的发言人。只回复名字，不要解释。
+        prompt = f"""Based on the conversation, which agent should speak next?
+Agents:
+{chr(10).join(agent_descs)}
 
-可选的发言人: {', '.join(agent_names)}
+Recent messages:
+{recent_text}
 
-最近消息:
-{recent_text}"""
+Reply with ONLY the agent name, nothing else. Options: {', '.join(agent_names)}"""
 
         try:
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.llm.default_model,
                 temperature=0.0,
-                max_tokens=50,
+                max_tokens=20,
             )
-            # DeepSeek 等 thinking 模型可能把回复放在 reasoning_content
-            raw = (response.content or response.reasoning_content or "").strip().lower()
-            name = re.sub(r'[^a-z0-9_-]', '', raw)
+            name = response.content.strip().lower()
+            # 清理可能的引号、标点
+            name = re.sub(r'[^a-z0-9_-]', '', name)
             agent = self.get_agent(name)
             if agent:
                 logger.debug(f"LLM路由选中: {agent.name}")
