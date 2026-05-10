@@ -78,8 +78,9 @@ class HybridScheduler(SchedulerBase):
         优先级：
         1. @mention — 被提到的agent都回应
         2. "大家" / "@all" — 所有agent回应
-        3. LLM路由 — 选最相关的一个agent
-        4. 空列表 — 没有agent需要回应
+        3. 关键词路由 — 匹配角色关键词
+        4. LLM路由 — 选最相关的一个agent
+        5. 首个agent兜底 — 确保不冷场
         """
         if not history:
             return []
@@ -102,13 +103,23 @@ class HybridScheduler(SchedulerBase):
             if "@all" in content_lower or "大家" in content_lower:
                 return list(self.agents)
 
-        # 3. LLM路由 → 选最相关的一个agent
-        if self.use_llm_router and self.llm:
-            agent = self._llm_route(history)
+            # 3. 关键词路由
+            agent = self._keyword_route(last_msg.content)
             if agent:
                 return [agent]
 
-        # 4. 没有足够信号 → 空列表（不需要回应）
+        # 4. LLM路由 → 选最相关的一个agent
+        if self.use_llm_router and self.llm:
+            agent = self._llm_route(history)
+            if agent:
+                print(f"🤖 LLM路由 → @{agent.name}", flush=True)
+                return [agent]
+            print("⚡ LLM路由未命中，使用兜底策略", flush=True)
+
+        # 5. 默认兜底：首个agent回应
+        if self.agents:
+            return [self.agents[0]]
+
         return []
 
     def _keyword_route(self, content: str) -> AgentConfig | None:
@@ -120,37 +131,32 @@ class HybridScheduler(SchedulerBase):
         return None
 
     def _llm_route(self, history: list[Message]) -> AgentConfig | None:
-        """用LLM决定谁应该说话（短prompt，省token）"""
+        """用LLM决定谁应该说话"""
         agent_names = [a.name for a in self.agents]
-        agent_descs = [f"- {a.name}({a.role}): {a.goal}" for a in self.agents]
-
-        # 只取最近几条消息做判断
         recent = history[-4:]
         recent_text = "\n".join(f"[{m.sender}]: {m.content[:200]}" for m in recent)
 
-        prompt = f"""Based on the conversation, which agent should speak next?
-Agents:
-{chr(10).join(agent_descs)}
+        prompt = f"""基于对话选择最合适的发言人。只回复一个名字，不要解释。
 
-Recent messages:
-{recent_text}
+可选的发言人: {', '.join(agent_names)}
 
-Reply with ONLY the agent name, nothing else. Options: {', '.join(agent_names)}"""
+最近消息:
+{recent_text}"""
 
         try:
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.llm.default_model,
                 temperature=0.0,
-                max_tokens=20,
+                max_tokens=50,
             )
-            name = response.content.strip().lower()
-            # 清理可能的引号、标点
-            name = re.sub(r'[^a-z0-9_-]', '', name)
-            agent = self.get_agent(name)
-            if agent:
-                return agent
-        except Exception:
-            pass
+            raw = (response.content or response.reasoning_content or "").strip().lower()
+            # 从回复中找第一个匹配的agent名
+            for name in agent_names:
+                if name in raw:
+                    return self.get_agent(name)
+            print(f"⚡ LLM路由返回未知内容: '{raw[:80]}'", flush=True)
+        except Exception as e:
+            print(f"⚡ LLM路由调用失败: {e}", flush=True)
 
         return None

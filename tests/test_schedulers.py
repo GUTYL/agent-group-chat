@@ -109,10 +109,12 @@ def test_plan_responses_empty_history():
     assert result == []
 
 
-def test_plan_responses_no_signal_returns_empty():
+def test_plan_responses_no_signal_falls_back():
     agents = _make_two_agents()
     scheduler = HybridScheduler(agents, use_llm_router=False)
     msg = Message(sender="human", content="随便聊聊", msg_type=MessageType.human_input)
     history = [msg]
     result = scheduler.plan_responses(history)
-    assert result == []
+    # 无mention/关键词/LLM路由 → 默认首位agent回应
+    assert len(result) == 1
+    assert result[0].name == agents[0].name
