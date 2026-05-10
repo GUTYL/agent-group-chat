@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.theme import Theme
 
@@ -34,7 +35,9 @@ class CliDisplay(DisplayBase):
         self._color_idx = 0
         self._streaming = False
         self._stream_name = ""
+        self._stream_buf = ""
         self._spinner = None
+        self._live: Live | None = None
 
     def _get_color(self, name: str) -> str:
         if name not in self._agent_colors:
@@ -61,20 +64,57 @@ class CliDisplay(DisplayBase):
     def begin_stream(self, agent_name: str, agent_role: str, agent_model: str = "") -> None:
         self._streaming = True
         self._stream_name = agent_name
+        self._stream_buf = ""
         color = self._get_color(agent_name)
         self._agent_meta[agent_name] = {"role": agent_role, "model": agent_model}
-        self._spin(f"  {agent_name} 思考中...")
+        title = self._header(agent_name, agent_role, agent_model, color)
+        self.console.print()
+        self._live = Live(
+            Panel("", title=title, title_align="left", border_style=color, padding=(0, 1)),
+            console=self.console, refresh_per_second=10, transient=False,
+        )
+        self._live.start()
 
     def on_chunk(self, text: str) -> None:
-        self._stop_spin()
-        if self._streaming:
-            self.console.print(text, end="", highlight=False)
+        if not self._streaming:
+            return
+        if self._live is None:
+            self._restart_live()
+        self._stream_buf += text
+        self._update_live()
+
+    def _restart_live(self) -> None:
+        color = self._get_color(self._stream_name)
+        meta = self._agent_meta.get(self._stream_name, {})
+        title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
+        self._live = Live(
+            Panel(self._stream_buf, title=title, title_align="left", border_style=color, padding=(0, 1)),
+            console=self.console, refresh_per_second=10, transient=False,
+        )
+        self._live.start()
+
+    def _update_live(self) -> None:
+        if self._live is None:
+            return
+        color = self._get_color(self._stream_name)
+        meta = self._agent_meta.get(self._stream_name, {})
+        title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
+        self._live.update(Panel(
+            self._stream_buf, title=title, title_align="left",
+            border_style=color, padding=(0, 1),
+        ))
+
+    def _stop_live(self) -> None:
+        if self._live:
+            self._live.stop()
+            self._live = None
 
     # ── Message dispatch ───────────────────────────────────
 
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
             tc_names = [tc.get("function", {}).get("name", "?") for tc in message.tool_calls]
+            self._stop_live()
             self._spin(f"  执行工具: {', '.join(tc_names)}")
             return
 
@@ -86,6 +126,11 @@ class CliDisplay(DisplayBase):
             return
 
         self._stop_spin()
+        if self._streaming and self._stream_name == message.sender:
+            self._streaming = False
+            self._stop_live()
+            return
+
         handlers = {
             MessageType.system: self._print_system,
             MessageType.human_input: self._print_human_input,
@@ -163,6 +208,7 @@ class CliDisplay(DisplayBase):
     # ── Message renderers ──────────────────────────────────
 
     def _print_chat(self, msg: Message) -> None:
+        self._stop_live()
         self._stop_spin()
         if self._streaming and self._stream_name == msg.sender:
             self._streaming = False

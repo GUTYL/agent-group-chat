@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from agc.core.agent import AgentConfig
@@ -9,6 +10,8 @@ from agc.core.message import Message, MessageType
 from agc.llm.base import LLMBase
 
 from .base import SchedulerBase
+
+logger = logging.getLogger(__name__)
 
 
 # 角色关键词映射（零成本路由）
@@ -149,8 +152,10 @@ Reply with ONLY the agent name, nothing else. Options: {', '.join(agent_names)}"
             name = re.sub(r'[^a-z0-9_-]', '', name)
             agent = self.get_agent(name)
             if agent:
+                logger.debug(f"LLM路由选中: {agent.name}")
                 return agent
-        except Exception:
-            pass
+            logger.debug(f"LLM路由返回未知agent: {name}")
+        except Exception as e:
+            logger.warning(f"LLM路由失败: {e}")
 
         return None
