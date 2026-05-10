@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 from typing import Optional
 
@@ -88,7 +87,7 @@ def chat(
         "human", "--human-name", help="人类在群聊中的名字"
     ),
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="是否显示详细过程"),
-    plain: bool = typer.Option(False, "--plain", help="使用纯文本输出(默认使用TUI交互界面)"),
+
 ):
     """启动一个多Agent群聊讨论"""
 
@@ -160,43 +159,19 @@ def chat(
         base_url=effective_base_url,
         api_key=effective_api_key,
         tools=tool_names if tool_names else [],
-        workspace_root=workspace_root if human != "off" or workspace else None,
+        workspace_root=workspace_root,
         human=human_loop if human_loop.mode != HumanMode.off else None,
     )
 
-    # 设置输出 — 默认使用 TUI，--plain 使用纯文本
-    if plain:
-        from agc.ui import CliDisplay
-        display = CliDisplay()
-        room.on_message(display.on_message)
-        room.on_chunk(display.on_chunk)
-        room.on_speaker_start(display.begin_stream)
-        display.print_header(topic, agents, human_loop=human_loop)
-        result = room.chat(topic)
-        display.print_result(result)
-    else:
-        from agc.ui import TuiDisplay
-        from agc.ui.tui_app import ChatTuiApp
-
-        tui_app = ChatTuiApp()
-        display = TuiDisplay(tui_app)
-        room.on_message(display.on_message)
-        room.on_chunk(display.on_chunk)
-        room.on_speaker_start(display.begin_stream)
-
-        def _run_chat() -> None:
-            try:
-                display.print_header(topic, agents, human_loop=human_loop)
-                result = room.chat(topic)
-                display.print_result(result)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error(f"群聊异常: {e}")
-                tui_app.call_from_thread(tui_app.exit)
-
-        chat_thread = threading.Thread(target=_run_chat, daemon=True)
-        chat_thread.start()
-        tui_app.run()
+    # 设置输出
+    from agc.ui import CliDisplay
+    display = CliDisplay()
+    room.on_message(display.on_message)
+    room.on_chunk(display.on_chunk)
+    room.on_speaker_start(display.begin_stream)
+    display.print_header(topic, agents, human_loop=human_loop)
+    result = room.chat(topic)
+    display.print_result(result)
 
 
 @app.command()

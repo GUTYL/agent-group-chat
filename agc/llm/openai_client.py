@@ -10,7 +10,7 @@ from openai import OpenAI
 
 from .base import LLMBase, LLMResponse
 
-FALLBACK_ENCODING = "clk100k_base"
+FALLBACK_ENCODING = "cl100k_base"
 
 
 class OpenAIClient(LLMBase):

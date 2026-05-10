@@ -26,7 +26,7 @@ from agc.tools.base import execute_tool_call, get_schemas_for_tools
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 3
+MAX_TOOL_ROUNDS = 8
 MAX_TOOL_RESULT_LENGTH = 2000
 SUMMARY_TEMPERATURE = 0.3
 SUMMARY_MAX_TOKENS = 800
@@ -162,10 +162,7 @@ class ChatRoom:
     def chat(self, topic: str) -> ChatResult:
         self._reset_state()
         self._build_system_prompts(topic)
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._emit_system(f"讨论话题: {topic}")
-        self._emit_system(f"当前时间: {now}（搜索时请注意使用此时间）")
 
         round_idx = 0
         total_tokens = 0
@@ -208,7 +205,7 @@ class ChatRoom:
     def _build_system_prompts(self, topic: str) -> None:
         extra_prompts = self._build_workspace_prompts()
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        time_hint = f"\n\n当前时间: {now}（搜索时请使用此时间以获取最新信息）"
+        time_hint = f"\n\n当前时间: {now}"
         for agent in self.config.agents:
             self._system_prompts[agent.name] = agent.build_system_prompt(
                 topic, self.config.agents,
@@ -353,7 +350,7 @@ class ChatRoom:
             result_messages.append(self._create_final_message(agent, response, round_idx))
             break
         else:
-            logger.warning(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成无工具回复")
+            logger.debug(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成文本回复")
             self._force_text_response(agent, topic, llm, result_messages, round_idx, total_tokens)
 
         return result_messages, total_tokens

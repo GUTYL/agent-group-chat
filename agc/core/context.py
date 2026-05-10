@@ -66,16 +66,32 @@ class ContextManager:
         if self.llm.count_tokens(total_text) <= self.max_tokens:
             return {"recent": filtered, "summary": None}
 
-        recent = filtered[-self.recent_window:]
-        older = filtered[:-self.recent_window]
+        # 截取最近的窗口，但保证不切断 tool_call / tool_result 配对
+        start = len(filtered) - self.recent_window
+        start = self._adjust_for_tool_pairs(filtered, start)
 
-        cache_key = f"{older[0].id}-{older[-1].id}"
-        summary = self._summary_cache.get(cache_key)
-        if not summary:
+        recent = filtered[start:]
+        older = filtered[:start]
+
+        cache_key = f"{older[0].id}-{older[-1].id}" if older else ""
+        summary = self._summary_cache.get(cache_key) if cache_key else ""
+        if older and not summary:
             summary = self._summarize(older)
-            self._summary_cache[cache_key] = summary
+            if cache_key:
+                self._summary_cache[cache_key] = summary
 
         return {"recent": recent, "summary": summary}
+
+    @staticmethod
+    def _adjust_for_tool_pairs(filtered: list[Message], start: int) -> int:
+        """向前扩展 start 以包含孤立的 tool_result 前面的 tool_call"""
+        first = filtered[start]
+        if first.msg_type == MessageType.tool_result:
+            for i in range(start - 1, -1, -1):
+                if filtered[i].msg_type == MessageType.tool_call:
+                    return i
+            return max(start - 1, 0)
+        return start
 
     def _summarize(self, messages: list[Message]) -> str:
         conversation = "\n".join(
