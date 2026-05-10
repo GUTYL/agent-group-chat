@@ -130,6 +130,34 @@ class CliDisplay(DisplayBase):
         )
         self.console.print(f"[dim]{stats}[/dim]")
 
+    # ── FreeChat display ───────────────────────────────────
+
+    def print_freechat_header(self, user_name: str, agents: list[Any]) -> None:
+        agent_lines = []
+        for a in agents:
+            color = self._get_color(a.name)
+            self._agent_meta[a.name] = {"role": a.role, "model": getattr(a, "model", "")}
+            model = getattr(a, "model", "")
+            model_str = f" [dim]({model})[/dim]" if model else ""
+            agent_lines.append(
+                f"  [{color}]@{a.name}[/{color}] [dim]· {a.role}{model_str}[/dim]"
+            )
+        agents_text = "\n".join(agent_lines)
+        self.console.print(Panel(
+            f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
+            title="自由群聊",
+            border_style="bright_blue",
+        ))
+        self.console.print()
+
+    def print_freechat_input(self, sender: str, content: str) -> None:
+        color = self._get_color(sender)
+        self.console.print(f"[bold {color}][{sender}][/bold {color}] {content}")
+
+    def print_topic_change(self, topic: str) -> None:
+        self.console.print()
+        self.console.print(f"[system]── 话题已切换为: {topic} ──[/system]")
+
     # ── Message renderers ──────────────────────────────────
 
     def _print_chat(self, msg: Message) -> None:

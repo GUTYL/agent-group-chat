@@ -34,3 +34,12 @@ class DisplayBase(ABC):
 
     def print_result(self, result: Any) -> None:
         """打印群聊结束结果（可选实现）"""
+
+    def print_freechat_header(self, user_name: str, agents: list[Any]) -> None:
+        """打印FreeChat开始标题（可选实现）"""
+
+    def print_freechat_input(self, sender: str, content: str) -> None:
+        """打印用户输入（IM风格，简洁格式）"""
+
+    def print_topic_change(self, topic: str) -> None:
+        """打印话题切换提示"""
