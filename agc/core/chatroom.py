@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Callable
+from datetime import datetime
+from typing import Any, Callable
 
 from agc.core.agent import AgentConfig
 from agc.core.context import ContextManager
-from agc.core.human_in_loop import HumanInTheLoop, HumanMode
+from agc.core.human_in_loop import HumanInTheLoop
 from agc.core.message import Message, MessageType
 from agc.core.room import RoomConfig
 from agc.core.workspace import WorkspaceManager
 from agc.llm.base import LLMBase
+from agc.llm.openai_client import OpenAIClient
 from agc.schedulers.base import SchedulerBase
 from agc.schedulers.hybrid import HybridScheduler
 from agc.schedulers.round_robin import RoundRobinScheduler
@@ -25,14 +26,15 @@ from agc.tools.base import execute_tool_call, get_schemas_for_tools
 
 logger = logging.getLogger(__name__)
 
-# 工具调用最大轮次（防止死循环）
 MAX_TOOL_ROUNDS = 3
+MAX_TOOL_RESULT_LENGTH = 2000
+SUMMARY_TEMPERATURE = 0.3
+SUMMARY_MAX_TOKENS = 800
+SUMMARY_RECENT_MSGS = 20
 
 
 @dataclass
 class ChatResult:
-    """群聊结果"""
-
     topic: str
     messages: list[Message]
     summary: str = ""
@@ -60,406 +62,380 @@ class ChatRoom:
         human: HumanInTheLoop | None = None,
         stream: bool = True,
     ):
-        """
-        Args:
-            name: 房间名
-            agents: 参与者列表
-            llm: 默认LLM客户端
-            scheduler: 调度策略 "round_robin" 或 "hybrid"
-            max_rounds: 最大轮数
-            context_window: 上下文token上限
-            verbose: 是否打印过程
-            base_url: 全局LLM API端点
-            api_key: 全局API Key
-            tools: 启用的工具名列表
-            workspace_root: 工作空间根目录（None=不使用工作空间）
-            human: 人类参与模块（None=不参与）
-            stream: 是否启用流式输出
-        """
         self.config = RoomConfig(
-            name=name,
-            agents=agents,
-            scheduler=scheduler,
-            max_rounds=max_rounds,
-            context_window=context_window,
-            verbose=verbose,
-            base_url=base_url,
-            api_key=api_key,
+            name=name, agents=agents, scheduler=scheduler,
+            max_rounds=max_rounds, context_window=context_window,
+            verbose=verbose, base_url=base_url, api_key=api_key,
         )
         self.history: list[Message] = []
         self._turn_counts: dict[str, int] = {}
+        self._system_prompts: dict[str, str] = {}
+        self._stream = stream
 
-        # ── 工作空间 ──────────────────────────────────────
-        self._workspace_mgr: WorkspaceManager | None = None
-        if workspace_root:
-            self._workspace_mgr = WorkspaceManager(workspace_root)
-            for agent in agents:
-                self._workspace_mgr.get(agent.name)
-            logger.info(f"工作空间已初始化: {workspace_root}")
-
-        # ── 人类参与 ─────────────────────────────────────
-        self._human: HumanInTheLoop | None = human
-
-# ── 工具配置 ──────────────────────────────────────
+        self._workspace_mgr = self._init_workspace(workspace_root, agents)
+        self._human = human
         self._enabled_tools: list[str] = list(tools or [])
-
-        # 自动注册无需API Key的通用工具
         self._auto_register_tools()
-
-        # ── LLM客户端 ────────────────────────────────────
-        self._llm_clients: dict[str, LLMBase] = {}
-        for agent in agents:
-            agent_base_url = agent.base_url or base_url
-            agent_api_key = agent.api_key or api_key
-            if llm and not agent_base_url and not agent_api_key:
-                self._llm_clients[agent.name] = llm
-            else:
-                from agc.llm.openai_client import OpenAIClient
-                self._llm_clients[agent.name] = OpenAIClient(
-                    api_key=agent_api_key,
-                    base_url=agent_base_url,
-                    default_model=agent.model,
-                )
-
-        # 默认LLM
+        self._llm_clients = self._init_llm_clients(agents, llm, base_url, api_key)
         self.llm = llm or self._llm_clients[agents[0].name]
-
-        # ── 调度器 ─────────────────────────────────────────
-        if scheduler == "round_robin":
-            self._scheduler: SchedulerBase = RoundRobinScheduler(agents)
-        elif scheduler == "hybrid":
-            self._scheduler = HybridScheduler(agents, llm=self.llm, use_llm_router=True)
-        else:
-            raise ValueError(f"未知调度策略: {scheduler}")
-
-        # ── 上下文管理器 ──────────────────────────────────
+        self._scheduler = self._init_scheduler(scheduler, agents)
         self._context = ContextManager(self.llm, max_tokens=context_window)
-
-        # ── 终止检测器 ────────────────────────────────────
         self._terminator = CompositeTerminator([
             ConsensusTerminator(window=3, threshold=2.0),
             MaxRoundsTerminator(max_rounds=max_rounds),
         ])
 
-        # system prompt 缓存
-        self._system_prompts: dict[str, str] = {}
-
-        # 回调钩子
-        self._on_message_callbacks: list = []
+        self._on_message_callbacks: list[Callable[[Message], None]] = []
         self._on_chunk_callbacks: list[Callable[[str], None]] = []
-        self._on_speaker_callbacks: list[Callable[[str], None]] = []
+        self._on_speaker_callbacks: list[Callable[[str, str, str], None]] = []
 
-        # 流式输出
-        self._stream = stream
+    # ── Initializers ───────────────────────────────────────
 
-    def on_message(self, callback):
-        """注册消息回调"""
+    @staticmethod
+    def _init_workspace(workspace_root: str | None, agents: list[AgentConfig]) -> WorkspaceManager | None:
+        if not workspace_root:
+            return None
+        mgr = WorkspaceManager(workspace_root)
+        for agent in agents:
+            mgr.get(agent.name)
+        logger.info(f"工作空间已初始化: {workspace_root}")
+        return mgr
+
+    @staticmethod
+    def _init_llm_clients(
+        agents: list[AgentConfig],
+        llm: LLMBase | None,
+        base_url: str | None,
+        api_key: str | None,
+    ) -> dict[str, LLMBase]:
+        clients: dict[str, LLMBase] = {}
+        for agent in agents:
+            agent_base_url = agent.base_url or base_url
+            agent_api_key = agent.api_key or api_key
+            if llm and not agent_base_url and not agent_api_key:
+                clients[agent.name] = llm
+            else:
+                clients[agent.name] = OpenAIClient(
+                    api_key=agent_api_key, base_url=agent_base_url, default_model=agent.model,
+                )
+        return clients
+
+    @staticmethod
+    def _init_scheduler(name: str, agents: list[AgentConfig]) -> SchedulerBase:
+        if name == "round_robin":
+            return RoundRobinScheduler(agents)
+        if name == "hybrid":
+            return HybridScheduler(agents, use_llm_router=True)
+        raise ValueError(f"未知调度策略: {name}")
+
+    # ── Callback registration ──────────────────────────────
+
+    def on_message(self, callback: Callable[[Message], None]) -> None:
         self._on_message_callbacks.append(callback)
 
-    def on_chunk(self, callback: Callable[[str], None]):
-        """注册流式输出回调"""
+    def on_chunk(self, callback: Callable[[str], None]) -> None:
         self._on_chunk_callbacks.append(callback)
 
-    def on_speaker_start(self, callback: Callable[[str], None]):
-        """注册发言人开始回调（流式输出前）"""
+    def on_speaker_start(self, callback: Callable[[str, str, str], None]) -> None:
         self._on_speaker_callbacks.append(callback)
 
-    def _emit_chunk(self, text: str):
+    def _emit_chunk(self, text: str) -> None:
         for cb in self._on_chunk_callbacks:
             cb(text)
 
-    def _emit_speaker_start(self, name: str):
+    def _emit_speaker_start(self, name: str, role: str, model: str) -> None:
         for cb in self._on_speaker_callbacks:
-            cb(name)
+            cb(name, role, model)
+
+    def _emit_system(self, content: str) -> Message:
+        msg = Message(
+            sender="system", content=content, msg_type=MessageType.system,
+            round_idx=len(self.history) // max(len(self.config.agents), 1),
+        )
+        self.history.append(msg)
+        for cb in self._on_message_callbacks:
+            cb(msg)
+        return msg
+
+    # ── Main loop ──────────────────────────────────────────
 
     def chat(self, topic: str) -> ChatResult:
-        """启动群聊讨论"""
-        self.history = []
-        self._turn_counts = {a.name: 0 for a in self.config.agents}
-        self._system_prompts = {}
+        self._reset_state()
+        self._build_system_prompts(topic)
 
-        # 预构建每个agent的system prompt（含工具+工作空间说明）
-        extra_prompts = self._build_workspace_prompts()
-        for agent in self.config.agents:
-            prompt = agent.build_system_prompt(
-                topic, self.config.agents,
-                extra=extra_prompts.get(agent.name, ""),
-            )
-            self._system_prompts[agent.name] = prompt
-
-        # 发出初始话题
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._emit_system(f"讨论话题: {topic}")
+        self._emit_system(f"当前时间: {now}（搜索时请注意使用此时间）")
 
         round_idx = 0
         total_tokens = 0
 
         while True:
-            # 选择下一个发言者
             speaker = self._scheduler.next_speaker(self.history, round_idx)
-
-            # 检查该agent是否超过发言次数限制
-            if speaker.max_turns > 0 and self._turn_counts[speaker.name] >= speaker.max_turns:
-                round_idx += 1
-                all_exhausted = all(
-                    (a.max_turns > 0 and self._turn_counts[a.name] >= a.max_turns)
-                    for a in self.config.agents
-                )
-                if all_exhausted:
+            if self._speaker_exhausted(speaker):
+                if self._all_exhausted():
                     self._emit_system("所有参与者已达到发言上限，讨论结束。")
                     break
                 continue
 
-            # 调用LLM生成回复（含工具调用循环）
-            self._emit_speaker_start(speaker.name)
+            self._emit_speaker_start(speaker.name, speaker.role, speaker.model)
             messages, tokens = self._generate_response(speaker, topic)
-            for msg in messages:
-                self.history.append(msg)
-                self._turn_counts[speaker.name] += 1 if msg.msg_type == MessageType.chat else 0
-                total_tokens += msg.metadata.get("tokens", 0)
-                for cb in self._on_message_callbacks:
-                    cb(msg)
+            self._process_messages(messages, speaker.name, tokens)
+            total_tokens += tokens
 
-            # ── 人类参与：暂停等人类输入 ────────────────────
-            if self._human and self._human.should_pause(round_idx):
-                human_msg = self._human.get_input(round_idx, speaker.name)
-                if human_msg:
-                    self.history.append(human_msg)
-                    for cb in self._on_message_callbacks:
-                        cb(human_msg)
-                    # 检查人类是否要求停止
-                    if human_msg.metadata.get("force_stop"):
-                        self._emit_system("人类参与者在讨论中要求结束。")
-                        break
+            if self._handle_human_pause(round_idx, speaker.name):
+                break
 
-            # 检查终止条件
-            should_stop, reason = self._terminator.should_stop(
-                self.history, self.config.agents
-            )
-            if should_stop:
-                self._emit_system(f"讨论结束: {reason}")
+            if self._check_termination():
                 break
 
             round_idx += 1
-
-            # 安全阀：硬性上限
-            total_turns = len(self.history)
-            hard_limit = self.config.max_rounds * len(self.config.agents)
-            if total_turns >= hard_limit:
-                self._emit_system(f"达到硬性上限 {hard_limit} 轮发言，讨论结束。")
+            if self._hit_hard_limit():
                 break
 
-        # 生成总结
         summary = self._generate_summary(topic)
-
-        # 打印工作空间概要
-        if self._workspace_mgr:
-            ws_summary = self._workspace_mgr.get_all_summaries()
-            if ws_summary:
-                logger.info(f"工作空间最终状态:\n{ws_summary}")
-
         return ChatResult(
-            topic=topic,
-            messages=self.history,
-            summary=summary,
-            total_tokens=total_tokens,
-            rounds=round_idx,
+            topic=topic, messages=self.history, summary=summary,
+            total_tokens=total_tokens, rounds=round_idx,
             stop_reason=self.history[-1].content if self.history else "",
         )
 
-    def _auto_register_tools(self):
-        """自动注册所有可用的工具（无需手动配置）
+    def _reset_state(self) -> None:
+        self.history = []
+        self._turn_counts = {a.name: 0 for a in self.config.agents}
+        self._system_prompts = {}
 
-        规则：
-        - web_fetch: 始终注册（纯HTTP，无需Key）
-        - web_search: 尝试自动检测可用后端
-        - workspace/memory: 有工作空间时自动注册
-        """
-        # 1. web_fetch 始终可用
-        if "web_fetch" not in self._enabled_tools:
-            from agc.tools.web_fetch import register_web_fetch_tool
-            register_web_fetch_tool()
-            self._enabled_tools.append("web_fetch")
-            logger.info("自动注册工具: web_fetch")
+    def _build_system_prompts(self, topic: str) -> None:
+        extra_prompts = self._build_workspace_prompts()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        time_hint = f"\n\n当前时间: {now}（搜索时请使用此时间以获取最新信息）"
+        for agent in self.config.agents:
+            self._system_prompts[agent.name] = agent.build_system_prompt(
+                topic, self.config.agents,
+                extra=extra_prompts.get(agent.name, "") + time_hint,
+            )
 
-        # 2. web_search: 如果在 tools 列表中或检测到可用后端
-        if "web_search" in self._enabled_tools:
-            # 已由 CLI 显式指定，确保后端已注册
-            pass
-        else:
-            # 自动检测可用搜索后端
-            try:
-                from agc.tools.search import create_search_tool
-                tool = create_search_tool(provider="duckduckgo")
-                if tool is not None:
-                    self._enabled_tools.append("web_search")
-                    logger.info("自动注册工具: web_search (检测到可用后端)")
-            except Exception:
-                logger.debug("无可用的搜索后端，跳过 web_search")
+    def _speaker_exhausted(self, speaker: AgentConfig) -> bool:
+        """返回 True 表示需要跳过该发言人（未耗尽则 False）"""
+        if speaker.max_turns <= 0:
+            return False
+        if self._turn_counts[speaker.name] < speaker.max_turns:
+            return False
+        return True
 
-        # 3. 工作空间 + 记忆工具
+    def _all_exhausted(self) -> bool:
+        return all(
+            a.max_turns > 0 and self._turn_counts.get(a.name, 0) >= a.max_turns
+            for a in self.config.agents
+        )
+
+    def _process_messages(self, messages: list[Message], speaker_name: str, tokens: int) -> None:
+        for msg in messages:
+            self.history.append(msg)
+            if msg.msg_type == MessageType.chat:
+                self._turn_counts[speaker_name] += 1
+            if msg.metadata.get("_emitted"):
+                continue
+            for cb in self._on_message_callbacks:
+                cb(msg)
+
+    def _handle_human_pause(self, round_idx: int, speaker_name: str) -> bool:
+        if not self._human or not self._human.should_pause(round_idx):
+            return False
+        human_msg = self._human.get_input(round_idx, speaker_name)
+        if not human_msg:
+            return False
+        self.history.append(human_msg)
+        for cb in self._on_message_callbacks:
+            cb(human_msg)
+        if human_msg.metadata.get("force_stop"):
+            self._emit_system("人类参与者在讨论中要求结束。")
+            return True
+        return False
+
+    def _check_termination(self) -> bool:
+        should_stop, reason = self._terminator.should_stop(self.history, self.config.agents)
+        if should_stop:
+            self._emit_system(f"讨论结束: {reason}")
+        return should_stop
+
+    def _hit_hard_limit(self) -> bool:
+        limit = self.config.max_rounds * len(self.config.agents)
+        if len(self.history) >= limit:
+            self._emit_system(f"达到硬性上限 {limit} 轮发言，讨论结束。")
+            return True
+        return False
+
+    # ── Tools ──────────────────────────────────────────────
+
+    def _auto_register_tools(self) -> None:
+        self._register_web_fetch()
+        self._register_web_search()
         if self._workspace_mgr:
-            from agc.tools.workspace import register_workspace_tools
-            ws_tool_names = register_workspace_tools(self._workspace_mgr)
-            for tn in ws_tool_names:
-                if tn not in self._enabled_tools:
-                    self._enabled_tools.append(tn)
-            logger.info(f"自动注册工作区工具: {ws_tool_names}")
+            self._register_workspace_tools()
+        self._tool_schemas: list[dict[str, Any]] = get_schemas_for_tools(self._enabled_tools)
 
-            from agc.tools.memory import register_memory_tools
-            mem_tool_names = register_memory_tools(self._workspace_mgr)
-            for tn in mem_tool_names:
-                if tn not in self._enabled_tools:
-                    self._enabled_tools.append(tn)
-            logger.info(f"自动注册记忆工具: {mem_tool_names}")
+    def _register_web_fetch(self) -> None:
+        if "web_fetch" in self._enabled_tools:
+            return
+        from agc.tools.web_fetch import register_web_fetch_tool
+        register_web_fetch_tool()
+        self._enabled_tools.append("web_fetch")
+        logger.info("自动注册工具: web_fetch")
 
-        # 4. 构建 schema
-        self._tool_schemas: list[dict] = get_schemas_for_tools(self._enabled_tools)
+    def _register_web_search(self) -> None:
+        if "web_search" in self._enabled_tools:
+            return
+        try:
+            from agc.tools.search import create_search_tool
+            if create_search_tool(provider="duckduckgo"):
+                self._enabled_tools.append("web_search")
+                logger.info("自动注册工具: web_search")
+        except Exception:
+            logger.debug("无可用的搜索后端，跳过 web_search")
+
+    def _register_workspace_tools(self) -> None:
+        from agc.tools.workspace import register_workspace_tools
+        from agc.tools.memory import register_memory_tools
+        for name in register_workspace_tools(self._workspace_mgr):
+            if name not in self._enabled_tools:
+                self._enabled_tools.append(name)
+        for name in register_memory_tools(self._workspace_mgr):
+            if name not in self._enabled_tools:
+                self._enabled_tools.append(name)
 
     def _build_workspace_prompts(self) -> dict[str, str]:
-        """为每个agent构建工具使用相关system prompt补充"""
-        prompts = {}
+        prompts: dict[str, str] = {}
         for agent in self.config.agents:
-            lines = []
-
-            # 工作空间提示
+            parts: list[str] = []
             if self._workspace_mgr:
-                lines.extend([
+                ws_path = self._workspace_mgr.get(agent.name).path
+                parts.extend([
                     f"\n## 你的工作空间",
-                    f"你有独立的工作空间目录: {self._workspace_mgr.get(agent.name).path}",
-                    f"你可以用以下工具管理你的工作空间：",
-                    f"- write_file: 写入文件",
-                    f"- read_file: 读取文件（也可以读取其他agent的文件）",
-                    f"- list_files: 列出文件目录",
-                    f"- run_code: 执行shell命令",
-                    f"",
-                    f"建议：分析问题后，把关键发现或代码写入工作空间文件，方便其他agent参考。",
-                    f"其他agent可以通过 read_file(owner='你的名字', filepath=...) 读取你的文件。",
-                    f"",
-                    f"## 你的记忆",
-                    f"你有专属的记忆工具，用于保存和检索关键信息：",
-                    f"- save_memory: 保存重要事实、结论、决策依据",
-                    f"- recall_memory: 搜索之前保存的记忆",
-                    f"- list_memories: 列出所有记忆",
-                    f"- delete_memory: 删除不再需要的记忆",
-                    f"",
-                    f"重要：当你发现关键事实或做出重要结论时，立即用 save_memory 保存，",
-                    f"避免后续重复研究。讨论中需要引用之前的信息时，用 recall_memory 查找。",
+                    f"你有独立的工作空间目录: {ws_path}",
+                    f"可用工具: write_file / read_file / list_files / run_code",
+                    f"\n## 你的记忆",
+                    f"可用工具: save_memory / recall_memory / list_memories / delete_memory",
                 ])
-
-            # web工具提示
             web_tools = [t for t in self._enabled_tools if t.startswith("web_")]
             if web_tools:
-                lines.extend([
+                parts.extend([
                     f"\n## 网络工具",
-                    f"你可以使用以下网络工具搜索和获取信息：",
-                    f"- web_search: 搜索互联网（如果已启用）",
-                    f"- web_fetch: 抓取网页全文，深入了解搜索结果中的页面",
-                    f"",
-                    f"建议：先用 web_search 找到相关链接，再用 web_fetch 阅读具体页面获取细节。",
+                    f"可用: web_search, web_fetch",
+                    f"建议先用 web_search 找到链接，再用 web_fetch 阅读页面详情。",
                 ])
-
-            if lines:
-                prompts[agent.name] = "\n".join(lines)
+            if parts:
+                prompts[agent.name] = "\n".join(parts)
         return prompts
 
+    # ── Response generation ────────────────────────────────
+
     def _generate_response(self, agent: AgentConfig, topic: str) -> tuple[list[Message], int]:
-        """调用LLM生成agent回复，支持工具调用循环"""
-        # 确定这个agent可用的工具schema
         agent_tools = self._resolve_tools(agent)
         llm = self._llm_clients.get(agent.name, self.llm)
         result_messages: list[Message] = []
         total_tokens = 0
-        round_idx = len(self.history) // max(len(self.config.agents), 1)
+        round_idx = self._current_round()
 
-        for tool_round in range(MAX_TOOL_ROUNDS + 1):
-            context_messages = self._context.build_messages(
-                agent, topic, self.history, self.config.agents,
-                system_prompt=self._system_prompts.get(agent.name),
-            )
-            # 把本轮已有的工具交互消息加入上下文
-            for rm in result_messages:
-                context_messages.append(rm.to_openai_msg())
-
+        for _ in range(MAX_TOOL_ROUNDS + 1):
+            ctx = self._build_context(agent, topic, result_messages)
             response = llm.chat(
-                messages=context_messages,
-                model=agent.model,
-                temperature=agent.temperature,
+                messages=ctx, model=agent.model, temperature=agent.temperature,
                 tools=agent_tools or None,
                 on_chunk=self._emit_chunk if self._stream else None,
             )
             total_tokens += response.total_tokens
 
             if response.has_tool_calls:
-                assistant_msg = Message(
-                    sender=agent.name,
-                    content=response.content or "",
-                    msg_type=MessageType.tool_call,
-                    round_idx=round_idx,
-                    tool_calls=response.tool_calls,
-                    reasoning_content=response.reasoning_content,
-                    metadata={"tokens": response.total_tokens, "model": response.model},
-                )
-                result_messages.append(assistant_msg)
-                for cb in self._on_message_callbacks:
-                    cb(assistant_msg)
-
-                for tc in response.tool_calls:
-                    func_name = tc["function"]["name"]
-                    func_args = tc["function"]["arguments"]
-
-                    # 注入_owner用于工作区工具路由
-                    tool_result = execute_tool_call(func_name, func_args, owner=agent.name)
-
-                    tool_msg = Message(
-                        sender="tool",
-                        content=tool_result.content[:2000],
-                        msg_type=MessageType.tool_result,
-                        round_idx=round_idx,
-                        tool_call_id=tc["id"],
-                        metadata={"tool_name": func_name, "tool_success": tool_result.success},
-                    )
-                    result_messages.append(tool_msg)
-                    for cb in self._on_message_callbacks:
-                        cb(tool_msg)
+                self._execute_tool_calls(agent, response, result_messages, round_idx)
                 continue
 
-            else:
-                content = response.content.strip()
-                mentions = self._parse_mentions(content)
-
-                final_msg = Message(
-                    sender=agent.name,
-                    content=content,
-                    msg_type=MessageType.mention if mentions else MessageType.chat,
-                    mentions=mentions,
-                    round_idx=round_idx,
-                    reasoning_content=response.reasoning_content,
-                    metadata={
-                        "tokens": response.total_tokens,
-                        "model": response.model,
-                        "finish_reason": response.finish_reason,
-                    },
-                )
-                result_messages.append(final_msg)
-                break
+            result_messages.append(self._create_final_message(agent, response, round_idx))
+            break
         else:
-            logger.warning(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制停止")
+            logger.warning(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成无工具回复")
+            self._force_text_response(agent, topic, llm, result_messages, round_idx, total_tokens)
 
         return result_messages, total_tokens
 
-    def _resolve_tools(self, agent: AgentConfig) -> list[dict]:
-        """确定agent可用的工具schema列表"""
-        # agent.tools 是白名单，如果指定了就只用那些
-        if agent.tools:
-            return get_schemas_for_tools(agent.tools)
-        # 否则用全局工具列表
-        return self._tool_schemas
+    def _current_round(self) -> int:
+        return len(self.history) // max(len(self.config.agents), 1)
+
+    def _build_context(self, agent: AgentConfig, topic: str, result_messages: list[Message]) -> list[dict[str, Any]]:
+        ctx = self._context.build_messages(
+            agent, topic, self.history, self.config.agents,
+            system_prompt=self._system_prompts.get(agent.name),
+        )
+        for rm in result_messages:
+            ctx.append(rm.to_openai_msg())
+        return ctx
+
+    def _execute_tool_calls(self, agent: AgentConfig, response, result_messages: list[Message], round_idx: int) -> None:
+        assistant_msg = Message(
+            sender=agent.name, content=response.content or "",
+            msg_type=MessageType.tool_call, round_idx=round_idx,
+            tool_calls=response.tool_calls,
+            reasoning_content=response.reasoning_content,
+            metadata={"tokens": response.total_tokens, "model": response.model, "_emitted": True},
+        )
+        result_messages.append(assistant_msg)
+        for cb in self._on_message_callbacks:
+            cb(assistant_msg)
+
+        for tc in response.tool_calls:
+            func_name = tc["function"]["name"]
+            func_args = tc["function"]["arguments"]
+            tool_result = execute_tool_call(func_name, func_args, owner=agent.name)
+            tool_msg = Message(
+                sender="tool", content=tool_result.content[:MAX_TOOL_RESULT_LENGTH],
+                msg_type=MessageType.tool_result, round_idx=round_idx,
+                tool_call_id=tc["id"],
+                metadata={"tool_name": func_name, "tool_success": tool_result.success, "_emitted": True},
+            )
+            result_messages.append(tool_msg)
+            for cb in self._on_message_callbacks:
+                cb(tool_msg)
+
+    def _force_text_response(self, agent: AgentConfig, topic: str, llm, result_messages: list[Message], round_idx: int, total_tokens: int) -> None:
+        try:
+            ctx = self._build_context(agent, topic, result_messages)
+            response = llm.chat(
+                messages=ctx, model=agent.model, temperature=agent.temperature,
+                tools=None, on_chunk=self._emit_chunk if self._stream else None,
+            )
+            result_messages.append(self._create_final_message(agent, response, round_idx))
+        except Exception as e:
+            logger.warning(f"强制无工具回复失败: {e}")
+
+    def _create_final_message(self, agent: AgentConfig, response, round_idx: int) -> Message:
+        content = response.content.strip()
+        mentions = self._parse_mentions(content)
+        return Message(
+            sender=agent.name, content=content,
+            msg_type=MessageType.mention if mentions else MessageType.chat,
+            mentions=mentions, round_idx=round_idx,
+            reasoning_content=response.reasoning_content,
+            metadata={
+                "tokens": response.total_tokens, "model": response.model,
+                "finish_reason": response.finish_reason,
+            },
+        )
+
+    def _resolve_tools(self, agent: AgentConfig) -> list[dict[str, Any]]:
+        return get_schemas_for_tools(agent.tools) if agent.tools else self._tool_schemas
+
+    def _parse_mentions(self, content: str) -> list[str]:
+        agent_names = {a.name for a in self.config.agents}
+        if self._human:
+            agent_names.add(self._human.name)
+        return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
+
+    # ── Summary ────────────────────────────────────────────
 
     def _generate_summary(self, topic: str) -> str:
-        """生成群聊总结"""
-        conversation = "\n".join(m.format_display() for m in self.history[-20:])
-
-        # 工作空间信息
+        conversation = "\n".join(
+            m.format_display() for m in self.history[-SUMMARY_RECENT_MSGS:]
+        )
         ws_info = ""
         if self._workspace_mgr:
             ws_info = f"\n\n各Agent工作空间:\n{self._workspace_mgr.get_all_summaries()}"
@@ -482,32 +458,9 @@ class ChatRoom:
         try:
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=800,
+                temperature=SUMMARY_TEMPERATURE, max_tokens=SUMMARY_MAX_TOKENS,
             )
             return response.content
         except Exception as e:
             logger.warning(f"总结生成失败: {e}")
             return "（总结生成失败）"
-
-    def _parse_mentions(self, content: str) -> list[str]:
-        """解析消息中的 @mentions"""
-        agent_names = {a.name for a in self.config.agents}
-        # 也允许 @human
-        if self._human:
-            agent_names.add(self._human.name)
-        mentions = re.findall(r"@(\w+)", content)
-        return [m for m in mentions if m in agent_names]
-
-    def _emit_system(self, content: str) -> Message:
-        """发出系统消息"""
-        msg = Message(
-            sender="system",
-            content=content,
-            msg_type=MessageType.system,
-            round_idx=len(self.history) // max(len(self.config.agents), 1),
-        )
-        self.history.append(msg)
-        for cb in self._on_message_callbacks:
-            cb(msg)
-        return msg

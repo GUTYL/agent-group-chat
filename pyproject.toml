@@ -12,7 +12,8 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.2",
     "readability-lxml>=0.8",
-    "ddgs>=9.0",
+    "ddgs>=9.14",
+    "textual>=8.2",
 ]
 
 [project.optional-dependencies]
