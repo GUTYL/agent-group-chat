@@ -63,8 +63,6 @@ class CliDisplay(DisplayBase):
         self._stream_name = agent_name
         color = self._get_color(agent_name)
         self._agent_meta[agent_name] = {"role": agent_role, "model": agent_model}
-        self.console.print()
-        self.console.print(f"[dim]❯[/dim] {self._header(agent_name, agent_role, agent_model, color)}")
         self._spin(f"  {agent_name} 思考中...")
 
     def on_chunk(self, text: str) -> None:
@@ -167,8 +165,6 @@ class CliDisplay(DisplayBase):
     def _print_chat(self, msg: Message) -> None:
         if self._streaming and self._stream_name == msg.sender:
             self._streaming = False
-            self.console.print()
-            return
 
         color = self._get_color(msg.sender)
         meta = self._agent_meta.get(msg.sender, {})
