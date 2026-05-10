@@ -81,8 +81,9 @@ class HybridScheduler(SchedulerBase):
         优先级：
         1. @mention — 被提到的agent都回应
         2. "大家" / "@all" — 所有agent回应
-        3. LLM路由 — 选最相关的一个agent
-        4. 空列表 — 没有agent需要回应
+        3. 关键词路由 — 匹配角色关键词
+        4. LLM路由 — 选最相关的一个agent
+        5. 首个agent — 默认兜底，确保有人回应
         """
         if not history:
             return []
@@ -105,13 +106,21 @@ class HybridScheduler(SchedulerBase):
             if "@all" in content_lower or "大家" in content_lower:
                 return list(self.agents)
 
-        # 3. LLM路由 → 选最相关的一个agent
+            # 3. 关键词路由
+            agent = self._keyword_route(last_msg.content)
+            if agent:
+                return [agent]
+
+        # 4. LLM路由 → 选最相关的一个agent
         if self.use_llm_router and self.llm:
             agent = self._llm_route(history)
             if agent:
                 return [agent]
 
-        # 4. 没有足够信号 → 空列表（不需要回应）
+        # 5. 默认兜底：首个agent回应，确保不冷场
+        if self.agents:
+            return [self.agents[0]]
+
         return []
 
     def _keyword_route(self, content: str) -> AgentConfig | None:
