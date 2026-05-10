@@ -163,6 +163,7 @@ class CliDisplay(DisplayBase):
     # ── Message renderers ──────────────────────────────────
 
     def _print_chat(self, msg: Message) -> None:
+        self._stop_spin()
         if self._streaming and self._stream_name == msg.sender:
             self._streaming = False
 
