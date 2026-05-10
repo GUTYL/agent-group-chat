@@ -115,7 +115,9 @@ class HybridScheduler(SchedulerBase):
         if self.use_llm_router and self.llm:
             agent = self._llm_route(history)
             if agent:
+                print(f"🤖 LLM路由 → @{agent.name}", flush=True)
                 return [agent]
+            print(f"⚡ LLM路由未命中，使用兜底策略", flush=True)
 
         # 5. 默认兜底：首个agent回应，确保不冷场
         if self.agents:
@@ -163,8 +165,8 @@ Reply with ONLY the agent name, nothing else. Options: {', '.join(agent_names)}"
             if agent:
                 logger.debug(f"LLM路由选中: {agent.name}")
                 return agent
-            logger.debug(f"LLM路由返回未知agent: {name}")
+            print(f"⚡ LLM路由返回未知agent: '{name}'", flush=True)
         except Exception as e:
-            logger.warning(f"LLM路由失败: {e}")
+            print(f"⚡ LLM路由调用失败: {e}", flush=True)
 
         return None
