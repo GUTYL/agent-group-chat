@@ -49,7 +49,7 @@ class ChatSession(ABC):
         self._auto_register_tools()
         self._llm_clients = self._init_llm_clients(agents, llm, base_url, api_key)
         self.llm = llm or self._llm_clients[agents[0].name]
-        self._scheduler = self._init_scheduler(scheduler, agents, self.llm)
+        self._scheduler = self._init_scheduler(scheduler, agents)
         self._context = ContextManager(self.llm, max_tokens=context_window)
 
         self._on_message_callbacks: list[Callable[[Message], None]] = []
@@ -88,11 +88,11 @@ class ChatSession(ABC):
         return clients
 
     @staticmethod
-    def _init_scheduler(name: str, agents: list[AgentConfig], llm: LLMBase | None = None) -> SchedulerBase:
+    def _init_scheduler(name: str, agents: list[AgentConfig]) -> SchedulerBase:
         if name == "round_robin":
             return RoundRobinScheduler(agents)
         if name == "hybrid":
-            return HybridScheduler(agents, llm=llm, use_llm_router=True)
+            return HybridScheduler(agents, use_llm_router=True)
         raise ValueError(f"未知调度策略: {name}")
 
     # ── Callback registration ──────────────────────────────
