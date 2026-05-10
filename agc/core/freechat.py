@@ -328,7 +328,8 @@ class FreeChatSession(ChatSession):
 
         if cmd == "/clear":
             self.history = []
-            self._session_store.delete_session(self.session_id)
+            if self.session_id:
+                self._session_store.delete_session(self.session_id)
             self.session_id = self._session_store.create_session()
             self._emit_system("会话历史已清空")
             return None
