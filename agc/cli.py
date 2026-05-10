@@ -12,7 +12,9 @@ from dotenv import load_dotenv
 
 from agc.core.agent import AgentConfig
 from agc.core.chatroom import ChatRoom
+from agc.core.freechat import FreeChatSession
 from agc.core.human_in_loop import HumanInTheLoop, HumanMode
+from agc.core.session import SessionStore
 from agc.tools.search import create_search_tool
 
 # 启动时加载 .env 文件
@@ -172,6 +174,145 @@ def chat(
     display.print_header(topic, agents, human_loop=human_loop)
     result = room.chat(topic)
     display.print_result(result)
+
+
+@app.command()
+def room(
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="YAML配置文件路径"
+    ),
+    name: Optional[str] = typer.Option(
+        None, "--name", help="指定会话名称（跳过LLM自动命名）"
+    ),
+    resume: Optional[str] = typer.Option(
+        None, "--resume", help="恢复历史会话（支持前缀匹配）"
+    ),
+    list_sessions: bool = typer.Option(
+        False, "--list", help="列出所有历史会话"
+    ),
+    model: str = typer.Option(
+        os.environ.get("OPENAI_MODEL", "gpt-4o"), "--model", "-m", help="默认LLM模型"
+    ),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url", "-b", help="LLM API端点"
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key", "-k", help="API Key"
+    ),
+    tools: Optional[str] = typer.Option(
+        None, "--tools", "-t", help="额外启用的工具(逗号分隔)"
+    ),
+    search: str = typer.Option(
+        "duckduckgo", "--search", help="搜索后端: duckduckgo"
+    ),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="工作空间目录"
+    ),
+    user_name: str = typer.Option(
+        "human", "--user-name", help="人类用户在群聊中的名字"
+    ),
+):
+    """启动IM风格自由群聊"""
+
+    # --list: 列出所有会话
+    if list_sessions:
+        store = SessionStore()
+        sessions = store.list_sessions()
+        if not sessions:
+            typer.echo("暂无保存的会话。")
+        else:
+            typer.echo("已保存的会话:")
+            for s in sessions:
+                typer.echo(f"  {s}")
+        return
+
+    tool_names = _setup_tools(tools, search)
+
+    # 构建agents
+    if config and config.exists():
+        cfg = _load_config(config)
+        agents = _build_agents(cfg)
+        base_url = base_url or cfg.get("base_url")
+        api_key = api_key or cfg.get("api_key")
+        if not tool_names and "tools" in cfg:
+            tool_names = _setup_tools(",".join(cfg["tools"]), search)
+    else:
+        agents = [
+            AgentConfig(
+                name="researcher", role="资深研究员",
+                goal="深入调研问题，提供信息支撑",
+                backstory="你是一位严谨的研究员，擅长搜索和整理信息。你会用数据和事实说话，不凭直觉下结论。",
+                model=model, tools=tool_names if tool_names else [],
+            ),
+            AgentConfig(
+                name="architect", role="系统架构师",
+                goal="设计方案，评估可行性和风险，做出权衡取舍",
+                backstory="你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。",
+                model=model, tools=tool_names if tool_names else [],
+            ),
+            AgentConfig(
+                name="reviewer", role="魔鬼代言人",
+                goal="质疑和验证结论，防止团队思维",
+                backstory="你天生怀疑一切，不轻易认同。你的价值在于别人都同意时你说'等等，万一呢？'",
+                model=model, tools=tool_names if tool_names else [],
+            ),
+        ]
+
+    effective_api_key = api_key or os.environ.get("OPENAI_API_KEY")
+    effective_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    workspace_root = workspace or "./data/workspaces"
+
+    store = SessionStore()
+    session_id = None
+
+    # --resume: 恢复会话
+    if resume:
+        try:
+            sessions = store.list_sessions()
+            matched = [s for s in sessions if s.startswith(resume)]
+            if len(matched) == 1:
+                session_id = matched[0]
+            elif len(matched) > 1:
+                typer.echo(f"前缀 '{resume}' 匹配到多个会话: {matched}")
+                return
+            else:
+                session_id = resume
+        except Exception as e:
+            typer.echo(f"无法找到会话: {e}")
+            return
+
+    # --name: 指定名称
+    if name and not resume:
+        session_id = store.create_session()
+        session_id = store.rename_session(session_id, name)
+
+    session = FreeChatSession(
+        agents=agents,
+        user_name=user_name,
+        base_url=effective_base_url,
+        api_key=effective_api_key,
+        tools=tool_names if tool_names else [],
+        workspace_root=workspace_root,
+        session_id=session_id,
+        session_store=store,
+    )
+
+    # 设置显示
+    from agc.ui import CliDisplay
+    display = CliDisplay()
+    session.on_message(display.on_message)
+    session.on_chunk(display.on_chunk)
+    session.on_speaker_start(display.begin_stream)
+
+    if resume and session_id:
+        try:
+            session.load_session(session_id)
+            session._build_system_prompts()
+        except Exception as e:
+            typer.echo(f"加载会话失败: {e}")
+            return
+
+    session.run()
 
 
 @app.command()
