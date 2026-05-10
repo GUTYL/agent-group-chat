@@ -24,5 +24,8 @@ data/
 # Pytest
 .pytest_cache/
 
+# OpenCode plans
+.opencode/
+
 # OS
 .DS_Store
