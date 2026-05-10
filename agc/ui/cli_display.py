@@ -66,9 +66,7 @@ class CliDisplay(DisplayBase):
         self._spin(f"  {agent_name} 思考中...")
 
     def on_chunk(self, text: str) -> None:
-        self._stop_spin()
-        if self._streaming:
-            self.console.print(text, end="", highlight=False)
+        pass
 
     # ── Message dispatch ───────────────────────────────────
 
