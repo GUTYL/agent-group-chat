@@ -35,6 +35,14 @@ class Message(BaseModel):
     tool_calls: list[dict[str, Any]] = []
     tool_call_id: str = ""
     reasoning_content: str = ""
+    session_id: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return self.model_dump(mode="python")
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "Message":
+        return cls.model_validate(data)
 
     @property
     def is_system(self) -> bool:
