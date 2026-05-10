@@ -56,6 +56,40 @@ class ContextManager:
         })
         return messages
 
+    def build_freechat_context(
+        self,
+        agent: AgentConfig,
+        history: list[Message],
+        all_agents: list[AgentConfig],
+        system_prompt: str,
+        current_topic: str | None = None,
+        recent_window: int = 30,
+    ) -> list[dict[str, Any]]:
+        """构建FreeChat模式的上下文（滑动窗口，无需总结压缩）"""
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+        if current_topic:
+            messages.append({
+                "role": "system",
+                "content": f"[当前话题: {current_topic}]",
+            })
+
+        filtered = [m for m in history if m.msg_type in VISIBLE_MESSAGE_TYPES]
+        start = max(0, len(filtered) - recent_window)
+        start = self._adjust_for_tool_pairs(filtered, start)
+        recent = filtered[start:]
+
+        for msg in recent:
+            messages.append(msg.to_openai_msg())
+
+        messages.append({
+            "role": "user",
+            "content": f"[{agent.name}] 有人发了一条消息，根据需要简洁回应。如果跟你无关可以不用回复。@名字 来指定对话对象。",
+        })
+        return messages
+
     def _select_history(self, history: list[Message]) -> dict[str, Any]:
         filtered = [m for m in history if m.msg_type in VISIBLE_MESSAGE_TYPES]
 

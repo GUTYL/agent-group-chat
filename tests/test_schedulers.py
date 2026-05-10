@@ -62,3 +62,57 @@ def test_hybrid_fallback_to_round_robin():
     msg = Message(sender="architect", content="今天天气不错", round_idx=0)
     next_speaker = scheduler.next_speaker([msg], 2)
     assert next_speaker.name == "reviewer"  # round 2 % 3 = 2
+
+
+def _make_two_agents():
+    return [
+        AgentConfig(name="researcher", role="研究员", goal="研究", backstory="研究员", model="gpt-4o"),
+        AgentConfig(name="architect", role="架构师", goal="设计", backstory="架构师", model="gpt-4o"),
+    ]
+
+
+def test_plan_responses_with_mention():
+    agents = _make_two_agents()
+    scheduler = HybridScheduler(agents)
+    msg = Message(sender="human", content="@architect 请设计一下", msg_type=MessageType.human_input, mentions=["architect"])
+    history = [msg]
+    result = scheduler.plan_responses(history)
+    assert len(result) == 1
+    assert result[0].name == "architect"
+
+
+def test_plan_responses_with_multiple_mentions():
+    agents = _make_two_agents()
+    scheduler = HybridScheduler(agents)
+    msg = Message(sender="human", content="@researcher @architect 大家看看", msg_type=MessageType.human_input, mentions=["researcher", "architect"])
+    history = [msg]
+    result = scheduler.plan_responses(history)
+    assert len(result) == 2
+    names = [a.name for a in result]
+    assert "researcher" in names
+    assert "architect" in names
+
+
+def test_plan_responses_with_all_keyword():
+    agents = _make_two_agents()
+    scheduler = HybridScheduler(agents)
+    msg = Message(sender="human", content="大家有什么想法", msg_type=MessageType.human_input)
+    history = [msg]
+    result = scheduler.plan_responses(history)
+    assert len(result) == len(agents)
+
+
+def test_plan_responses_empty_history():
+    agents = _make_two_agents()
+    scheduler = HybridScheduler(agents)
+    result = scheduler.plan_responses([])
+    assert result == []
+
+
+def test_plan_responses_no_signal_returns_empty():
+    agents = _make_two_agents()
+    scheduler = HybridScheduler(agents, use_llm_router=False)
+    msg = Message(sender="human", content="随便聊聊", msg_type=MessageType.human_input)
+    history = [msg]
+    result = scheduler.plan_responses(history)
+    assert result == []

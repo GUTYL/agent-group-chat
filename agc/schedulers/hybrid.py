@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from agc.core.agent import AgentConfig
-from agc.core.message import Message
+from agc.core.message import Message, MessageType
 from agc.llm.base import LLMBase
 
 from .base import SchedulerBase
@@ -71,6 +71,45 @@ class HybridScheduler(SchedulerBase):
 
         # 4. RoundRobin 兜底
         return self.agents[round_idx % len(self.agents)]
+
+    def plan_responses(self, history: list[Message]) -> list[AgentConfig]:
+        """FreeChat模式：决定哪些agent应该回应
+
+        优先级：
+        1. @mention — 被提到的agent都回应
+        2. "大家" / "@all" — 所有agent回应
+        3. LLM路由 — 选最相关的一个agent
+        4. 空列表 — 没有agent需要回应
+        """
+        if not history:
+            return []
+
+        last_msg = history[-1]
+
+        # 1. @mention → 被提到的agents回应
+        if last_msg.has_mentions:
+            mentioned = []
+            for name in last_msg.mentions:
+                agent = self.get_agent(name)
+                if agent and agent not in mentioned:
+                    mentioned.append(agent)
+            if mentioned:
+                return mentioned
+
+        # 2. "@all" 或 "大家" → 所有agent回应
+        if last_msg.msg_type == MessageType.human_input:
+            content_lower = last_msg.content.lower()
+            if "@all" in content_lower or "大家" in content_lower:
+                return list(self.agents)
+
+        # 3. LLM路由 → 选最相关的一个agent
+        if self.use_llm_router and self.llm:
+            agent = self._llm_route(history)
+            if agent:
+                return [agent]
+
+        # 4. 没有足够信号 → 空列表（不需要回应）
+        return []
 
     def _keyword_route(self, content: str) -> AgentConfig | None:
         """基于关键词匹配角色"""
