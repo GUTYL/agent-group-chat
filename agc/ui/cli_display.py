@@ -69,7 +69,7 @@ class CliDisplay(DisplayBase):
         title = self._header(agent_name, agent_role, agent_model, color)
         self.console.print()
         self._live = Live(
-            Panel("", title=title, title_align="left", border_style=color, padding=(0, 1)),
+            Panel("[dim]⏳ 思考中...[/dim]", title=title, title_align="left", border_style=color, padding=(0, 1)),
             console=self.console, refresh_per_second=10, transient=False,
         )
         self._live.start()
@@ -98,8 +98,9 @@ class CliDisplay(DisplayBase):
         color = self._get_color(self._stream_name)
         meta = self._agent_meta.get(self._stream_name, {})
         title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
+        content = self._stream_buf if self._stream_buf else "[dim]⏳ 思考中...[/dim]"
         self._live.update(Panel(
-            self._stream_buf, title=title, title_align="left",
+            content, title=title, title_align="left",
             border_style=color, padding=(0, 1),
         ))
 
