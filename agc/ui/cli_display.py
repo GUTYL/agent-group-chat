@@ -152,8 +152,11 @@ class CliDisplay(DisplayBase):
 
     def print_freechat_input(self, sender: str, content: str) -> None:
         color = self._get_color(sender)
-        self.console.print(f"[dim]❯[/dim] [bold {color}]{sender}[/bold {color}] [dim]用户[/dim]")
-        self.console.print(f"  {content}")
+        title = f"[bold {color}]{sender}[/bold {color}] [dim]用户[/dim]"
+        self.console.print(Panel(
+            content, title=title, title_align="left",
+            border_style=color, padding=(0, 1),
+        ))
 
     def print_topic_change(self, topic: str) -> None:
         self.console.print()
@@ -183,6 +186,9 @@ class CliDisplay(DisplayBase):
 
     def _print_human_input(self, msg: Message) -> None:
         color = self._get_color(msg.sender)
+        title = f"[bold {color}]{msg.sender}[/bold {color}] [dim]用户[/dim]"
         self.console.print()
-        self.console.print(f"[dim]❯[/dim] [bold {color}]{msg.sender}[/bold {color}] [dim]用户[/dim]")
-        self.console.print(f"  {msg.content}")
+        self.console.print(Panel(
+            msg.content, title=title, title_align="left",
+            border_style=color, padding=(0, 1),
+        ))
