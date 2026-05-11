@@ -1,19 +1,21 @@
 """网页抓取工具 — 抓取URL并提取可读内容
 
-参考 nanobot/agent/tools/web.py 实现，简化版：
-- httpx 获取页面
-- readability-lxml 提取正文
-- 去标签 + HTML实体解码
-- 支持 markdown 和纯文本两种输出模式
-无需任何 API Key，纯本地运行。
+基于 nanobot/agent/tools/web.py 重写：
+- Jina Reader API (r.jina.ai) 优先提取，无需 API Key
+- readability-lxml 本地兜底
+- SSRF 防护：校验解析后 IP，禁止私有/内网地址
+- httpx 同步客户端，支持代理
 """
 
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import logging
+import os
 import re
+import socket
 from urllib.parse import urlparse
 
 import httpx
@@ -45,7 +47,19 @@ _DEFAULT_HEADERS = {
 }
 _MAX_REDIRECTS = 5
 _DEFAULT_MAX_CHARS = 50000
+_JINA_READER_URL = "https://r.jina.ai"
 
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -80,6 +94,52 @@ def _validate_url(url: str) -> tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """判断IP地址是否属于私有/内网/回环段"""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return any(addr in net for net in _PRIVATE_NETWORKS)
+
+
+def _resolve_to_ip(hostname: str) -> str | None:
+    """DNS解析主机名，返回IP字符串或None"""
+    try:
+        ipaddress.ip_address(hostname)
+        return hostname
+    except ValueError:
+        pass
+    try:
+        info = socket.getaddrinfo(hostname, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _, _, _, _, sockaddr in info:
+            return sockaddr[0]
+    except (socket.gaierror, IndexError):
+        pass
+    return None
+
+
+def _validate_url_safe(url: str) -> tuple[bool, str]:
+    """校验URL安全：scheme + domain + SSRF防护（IP检查）"""
+    is_valid, error = _validate_url(url)
+    if not is_valid:
+        return False, error
+
+    p = urlparse(url)
+    hostname = p.hostname
+    if not hostname:
+        return False, "无法解析主机名"
+
+    if _is_private_ip(hostname):
+        return False, f"禁止访问内部/私有IP: {hostname}"
+
+    ip = _resolve_to_ip(hostname)
+    if ip and _is_private_ip(ip):
+        return False, f"禁止访问内部/私有地址: {hostname} → {ip}"
+
+    return True, ""
 
 
 def _html_to_markdown(html_content: str, title: str = "") -> str:
@@ -148,7 +208,10 @@ def _html_to_markdown(html_content: str, title: str = "") -> str:
 
 
 class WebFetchTool(ToolBase):
-    """抓取网页并提取可读内容"""
+    """抓取网页并提取可读内容
+
+    提取策略: Jina Reader (r.jina.ai) → readability-lxml 本地兜底
+    """
 
     name = "web_fetch"
     description = (
@@ -193,62 +256,106 @@ class WebFetchTool(ToolBase):
             },
         }
 
-    def execute(
-        self,
-        url: str,
-        extract_mode: str = "markdown",
-        max_chars: int | None = None,
-        **kwargs,
-    ) -> ToolResult:
-        """抓取 URL 并提取内容（同步版本）"""
-        max_chars = max_chars or self.max_chars
-        url = url.strip(" \t\r\n`\"'")
+    # ── Jina Reader ──────────────────────────────────────
 
-        # URL 校验
-        is_valid, error_msg = _validate_url(url)
-        if not is_valid:
-            return ToolResult(success=False, content=f"❌ URL无效: {error_msg}")
+    def _try_jina_reader(self, url: str, max_chars: int) -> str | None:
+        """通过 Jina Reader API 抓取，返回格式化结果或 None（触发回退）"""
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": _DEFAULT_USER_AGENT,
+        }
+        jina_key = os.environ.get("JINA_API_KEY", "")
+        if jina_key:
+            headers["Authorization"] = f"Bearer {jina_key}"
 
+        try:
+            with httpx.Client(timeout=30.0, proxy=self.proxy) as client:
+                r = client.get(f"{_JINA_READER_URL}/{url}", headers=headers)
+                if r.status_code == 429:
+                    logger.debug("Jina Reader 限流 (429)，回退到本地抓取")
+                    return None
+                r.raise_for_status()
+
+            data = r.json().get("data", {})
+            title = data.get("title", "")
+            text = data.get("content", "")
+            final_url = data.get("url", url)
+
+            if not text:
+                logger.debug("Jina Reader 返回空内容，回退到本地抓取")
+                return None
+
+            if title and not text.startswith(f"# {title}"):
+                text = f"# {title}\n\n{text}"
+
+            truncated = len(text) > max_chars
+            if truncated:
+                text = text[:max_chars]
+
+            text = f"{_UNTRUSTED_BANNER}\n\n{text}"
+
+            lines = [
+                f"URL: {url}",
+                f"Final URL: {final_url}",
+                "Extractor: jina",
+            ]
+            if title:
+                lines.append(f"Title: {title}")
+            lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
+            lines.append("")
+            lines.append(text)
+
+            return "\n".join(lines)
+
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            logger.debug("Jina Reader HTTP %s for %s，回退到本地抓取", status, url)
+            return None
+        except Exception as e:
+            logger.debug("Jina Reader 异常 (%s)，回退到本地抓取: %s", type(e).__name__, e)
+            return None
+
+    # ── Local fetch ──────────────────────────────────────
+
+    def _fetch_local(self, url: str, extract_mode: str, max_chars: int) -> str:
+        """本地 httpx 抓取 + readability 提取，返回格式化结果"""
         try:
             with httpx.Client(
                 follow_redirects=True,
                 max_redirects=_MAX_REDIRECTS,
-                timeout=20.0,
+                timeout=30.0,
                 proxy=self.proxy,
                 headers=_DEFAULT_HEADERS,
             ) as client:
                 r = client.get(url)
                 r.raise_for_status()
-
         except httpx.TimeoutException:
-            return ToolResult(success=False, content=f"❌ 请求超时: {url}")
+            raise RuntimeError(f"请求超时: {url}") from None
         except httpx.HTTPStatusError as e:
             hint = " (站点反爬拦截)" if e.response.status_code == 403 else ""
-            return ToolResult(
-                success=False,
-                content=f"❌ HTTP {e.response.status_code}{hint}: {url}",
-            )
+            raise RuntimeError(f"HTTP {e.response.status_code}{hint}: {url}") from None
         except Exception as e:
-            return ToolResult(success=False, content=f"❌ 请求失败: {e}")
+            raise RuntimeError(f"请求失败: {e}") from e
 
-        # 内容提取
         final_url = str(r.url)
+        is_safe, redirect_error = _validate_url_safe(final_url)
+        if not is_safe:
+            raise RuntimeError(f"重定向到不安全地址: {redirect_error}")
+
         content_type = r.headers.get("content-type", "")
         body = _sanitize(r.text)
         extractor = "raw"
         title = ""
 
         if "application/json" in content_type:
-            # JSON 响应 → 格式化输出
             try:
-                data = r.json()
-                text = json.dumps(data, indent=2, ensure_ascii=False)
+                data_json = r.json()
+                text = json.dumps(data_json, indent=2, ensure_ascii=False)
                 extractor = "json"
             except Exception:
                 text = body
 
         elif "text/html" in content_type or body[:256].lower().startswith(("<!doctype", "<html")):
-            # HTML 页面 → readability 提取
             try:
                 from readability import Document
 
@@ -265,7 +372,6 @@ class WebFetchTool(ToolBase):
                         text = f"{title}\n\n{text}"
                     extractor = "readability"
             except ImportError:
-                # readability 未安装，回退到简单去标签
                 logger.warning("readability-lxml 未安装，回退到简单HTML清理")
                 if extract_mode == "markdown":
                     text = _html_to_markdown(body)
@@ -273,34 +379,59 @@ class WebFetchTool(ToolBase):
                     text = _normalize(_strip_tags(body))
                 extractor = "strip_tags"
         else:
-            # 纯文本或其他
             text = body
 
-        # 截断
         truncated = len(text) > max_chars
         if truncated:
-            text = text[:max_chars] + f"\n\n... (内容已截断，共 {len(text)} 字符)"
+            text = text[:max_chars]
 
-        # 添加安全提示
         text = f"{_UNTRUSTED_BANNER}\n\n{text}"
 
-        # 构建结果
-        result_lines = [
+        lines = [
             f"URL: {url}",
         ]
         if final_url != url:
-            result_lines.append(f"Final URL: {final_url}")
-        result_lines.append(f"Extractor: {extractor}")
+            lines.append(f"Final URL: {final_url}")
+        lines.append(f"Extractor: {extractor}")
         if title:
-            result_lines.append(f"Title: {title}")
-        result_lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
-        result_lines.append("")
-        result_lines.append(text)
+            lines.append(f"Title: {title}")
+        lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
+        lines.append("")
+        lines.append(text)
 
-        return ToolResult(
-            success=True,
-            content="\n".join(result_lines),
-        )
+        return "\n".join(lines)
+
+    # ── Execute ──────────────────────────────────────────
+
+    def execute(
+        self,
+        url: str,
+        extract_mode: str = "markdown",
+        max_chars: int | None = None,
+        **kwargs,
+    ) -> ToolResult:
+        """抓取 URL 并提取内容
+
+        提取策略: Jina Reader 优先 → readability-lxml 本地兜底
+        """
+        max_chars = max_chars or self.max_chars
+        url = url.strip(" \t\r\n`\"'")
+
+        is_valid, error_msg = _validate_url_safe(url)
+        if not is_valid:
+            return ToolResult(success=False, content=f"❌ {error_msg}")
+
+        # Jina Reader 优先
+        jina_result = self._try_jina_reader(url, max_chars)
+        if jina_result is not None:
+            return ToolResult(success=True, content=jina_result)
+
+        # 本地抓取兜底
+        try:
+            result_text = self._fetch_local(url, extract_mode, max_chars)
+            return ToolResult(success=True, content=result_text)
+        except RuntimeError as e:
+            return ToolResult(success=False, content=f"❌ {e}")
 
 
 def register_web_fetch_tool(max_chars: int = _DEFAULT_MAX_CHARS, proxy: str | None = None) -> str:

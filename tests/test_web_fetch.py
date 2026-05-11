@@ -4,9 +4,11 @@ from agc.tools.base import get_tool
 from agc.tools.web_fetch import (
     WebFetchTool,
     _html_to_markdown,
+    _is_private_ip,
     _normalize,
     _strip_tags,
     _validate_url,
+    _validate_url_safe,
     register_web_fetch_tool,
 )
 
@@ -21,6 +23,56 @@ def test_validate_url():
     assert "http" in msg
 
     ok, msg = _validate_url("not-a-url")
+    assert not ok
+
+
+def test_is_private_ip():
+    """私有/内网IP检测"""
+    assert _is_private_ip("10.0.0.1") is True
+    assert _is_private_ip("10.255.255.255") is True
+    assert _is_private_ip("172.16.0.1") is True
+    assert _is_private_ip("172.31.255.255") is True
+    assert _is_private_ip("192.168.1.1") is True
+    assert _is_private_ip("127.0.0.1") is True
+    assert _is_private_ip("0.0.0.0") is True
+    assert _is_private_ip("169.254.1.1") is True
+    assert _is_private_ip("::1") is True
+    assert _is_private_ip("fc00::1") is True
+    assert _is_private_ip("fe80::1") is True
+    # 公网IP
+    assert _is_private_ip("8.8.8.8") is False
+    assert _is_private_ip("1.1.1.1") is False
+    assert _is_private_ip("93.184.216.34") is False
+    # 无效IP
+    assert _is_private_ip("not-an-ip") is False
+
+
+def test_validate_url_safe():
+    """SSRF安全校验"""
+    # 公网域名放行
+    ok, _ = _validate_url_safe("https://example.com")
+    assert ok
+
+    # 公网IP放行
+    ok, _ = _validate_url_safe("https://8.8.8.8")
+    assert ok
+
+    # 私有IP拒绝
+    ok, msg = _validate_url_safe("http://127.0.0.1")
+    assert not ok
+    assert "禁止" in msg
+
+    ok, msg = _validate_url_safe("https://10.0.0.1")
+    assert not ok
+
+    ok, msg = _validate_url_safe("http://192.168.1.1")
+    assert not ok
+
+    ok, msg = _validate_url_safe("http://[::1]")
+    assert not ok
+
+    # 无效scheme拒绝
+    ok, msg = _validate_url_safe("ftp://example.com")
     assert not ok
 
 
@@ -73,7 +125,24 @@ def test_web_fetch_invalid_url():
     tool = WebFetchTool()
     result = tool.execute(url="ftp://bad.com")
     assert not result.success
-    assert "URL无效" in result.content
+    assert "http" in result.content.lower()
+
+
+def test_web_fetch_localhost_rejected():
+    """SSRF: localhost 被拒绝"""
+    tool = WebFetchTool()
+    result = tool.execute(url="http://localhost/")
+    assert not result.success
+    assert "禁止" in result.content
+
+
+def test_web_fetch_private_ip_rejected():
+    """SSRF: 私有IP被拒绝"""
+    tool = WebFetchTool()
+    for url in ("http://192.168.1.1/", "http://10.0.0.1/", "http://127.0.0.1/"):
+        result = tool.execute(url=url)
+        assert not result.success, f"Should reject {url}"
+        assert "禁止" in result.content
 
 
 def test_web_fetch_bad_domain():
@@ -87,9 +156,16 @@ def test_web_fetch_json_api():
     """抓取JSON API（httpbin）"""
     tool = WebFetchTool()
     result = tool.execute(url="https://httpbin.org/json")
-    # httpbin可能不稳定，只检查格式
     if result.success:
         assert "json" in result.content.lower() or "slideshow" in result.content.lower()
+
+
+def test_web_fetch_public_url_accepted():
+    """公网IP应通过SSRF检查不被拒绝"""
+    tool = WebFetchTool()
+    result = tool.execute(url="https://8.8.8.8")
+    # SSRF 不应拦截公网IP（无论网络请求是否成功）
+    assert "禁止" not in result.content
 
 
 def test_register_web_fetch_tool():

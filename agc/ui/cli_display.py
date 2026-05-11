@@ -1,4 +1,8 @@
-"""终端输出 — 简洁的群聊过程显示"""
+"""终端输出 — 简洁的群聊过程显示
+
+流式显示: Live + Panel 边框全程可见，内容逐字增长。
+整个 agent 回合只维持一个 Live 实例，tool call 期间只更新内容不停止 Live。
+"""
 
 from __future__ import annotations
 
@@ -46,6 +50,7 @@ class CliDisplay(DisplayBase):
         self._streaming = False
         self._stream_name = ""
         self._stream_buf = ""
+        self._tool_status = ""
         self._spinner = None
         self._live: Live | None = None
 
@@ -71,22 +76,43 @@ class CliDisplay(DisplayBase):
 
     # ── Streaming ──────────────────────────────────────────
 
+    def _build_panel(self) -> Panel:
+        """Build the Panel renderable with current stream content. 边框全程可见。"""
+        color = self._get_color(self._stream_name)
+        meta = self._agent_meta.get(self._stream_name, {})
+        title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
+
+        content = self._stream_buf if self._stream_buf else "[dim]⏳ 思考中...[/dim]"
+        if self._tool_status:
+            content += f"\n\n[dim]🔧 {self._tool_status}[/dim]"
+
+        return Panel(
+            content,
+            title=title,
+            title_align="left",
+            border_style=color,
+            padding=(0, 1),
+        )
+
+    def _update_stream(self) -> None:
+        if self._live is not None:
+            self._live.update(self._build_panel())
+
+    def _stop_live(self) -> None:
+        if self._live:
+            self._live.stop()
+            self._live = None
+
     def begin_stream(self, agent_name: str, agent_role: str, agent_model: str = "") -> None:
+        self._stop_spin()
+        self._stop_live()
         self._streaming = True
         self._stream_name = agent_name
         self._stream_buf = ""
-        color = self._get_color(agent_name)
+        self._tool_status = ""
         self._agent_meta[agent_name] = {"role": agent_role, "model": agent_model}
-        title = self._header(agent_name, agent_role, agent_model, color)
-        self.console.print()
         self._live = Live(
-            Panel(
-                "[dim]⏳ 思考中...[/dim]",
-                title=title,
-                title_align="left",
-                border_style=color,
-                padding=(0, 1),
-            ),
+            self._build_panel(),
             console=self.console,
             refresh_per_second=10,
             transient=False,
@@ -96,71 +122,39 @@ class CliDisplay(DisplayBase):
     def on_chunk(self, text: str) -> None:
         if not self._streaming:
             return
-        if self._live is None:
-            self._restart_live()
         self._stream_buf += text
-        self._update_live()
-
-    def _restart_live(self) -> None:
-        color = self._get_color(self._stream_name)
-        meta = self._agent_meta.get(self._stream_name, {})
-        title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
-        self._live = Live(
-            Panel(
-                self._stream_buf,
-                title=title,
-                title_align="left",
-                border_style=color,
-                padding=(0, 1),
-            ),
-            console=self.console,
-            refresh_per_second=10,
-            transient=False,
-        )
-        self._live.start()
-
-    def _update_live(self) -> None:
-        if self._live is None:
-            return
-        color = self._get_color(self._stream_name)
-        meta = self._agent_meta.get(self._stream_name, {})
-        title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
-        content = self._stream_buf if self._stream_buf else "[dim]⏳ 思考中...[/dim]"
-        self._live.update(
-            Panel(
-                content,
-                title=title,
-                title_align="left",
-                border_style=color,
-                padding=(0, 1),
-            )
-        )
-
-    def _stop_live(self) -> None:
-        if self._live:
-            self._live.stop()
-            self._live = None
+        self._update_stream()
 
     # ── Message dispatch ───────────────────────────────────
 
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
             tc_names = [tc.get("function", {}).get("name", "?") for tc in message.tool_calls]
-            self._stop_live()
-            self._spin(f"  执行工具: {', '.join(tc_names)}")
+            self._tool_status = f"执行工具: {', '.join(tc_names)}"
+            if self._live is not None:
+                self._update_stream()
+            else:
+                self._spin(f"  🔧 执行工具: {', '.join(tc_names)}")
             return
 
         if message.msg_type == MessageType.tool_result:
-            if message.metadata.get("tool_success", True):
-                return
-            self._stop_spin()
-            self.console.print(f"  [red]{message.content[:300]}[/red]")
+            if self._live is not None:
+                if not message.metadata.get("tool_success", True):
+                    self._tool_status = f"❌ 错误: {message.content[:200]}"
+                else:
+                    self._tool_status = ""
+                self._update_stream()
+            else:
+                self._stop_spin()
+                if not message.metadata.get("tool_success", True):
+                    self.console.print(f"  [red]{message.content[:300]}[/red]")
             return
 
         self._stop_spin()
         if self._streaming and self._stream_name == message.sender:
             self._streaming = False
             self._stop_live()
+            # Panel 边框已由最后一次 Live.update 渲染并保留 (transient=False)
             return
 
         handlers = {

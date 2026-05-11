@@ -11,6 +11,7 @@ dependencies = [
     "tiktoken>=0.12",
     "pyyaml>=6.0",
     "python-dotenv>=1.2",
+    "httpx>=0.28",
     "readability-lxml>=0.8",
     "ddgs>=9.14",
     "prompt-toolkit>=3.0.52",
