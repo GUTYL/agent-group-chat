@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -55,8 +58,45 @@ def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
     return tool_names
 
 
+_DEFAULT_AGENTS = [
+    {"name": "researcher", "role": "资深研究员",
+     "goal": "深入调研问题，提供信息支撑，善于发现关键细节",
+     "backstory": "你是一位严谨的研究员，擅长搜索和整理信息。你总是先搞清楚问题的全貌，再让别人介入讨论。你会用数据和事实说话，不凭直觉下结论。"},
+    {"name": "architect", "role": "系统架构师",
+     "goal": "设计方案，评估可行性和风险，做出权衡取舍",
+     "backstory": "你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。你倾向简洁可靠的方案，而不是过度设计。"},
+    {"name": "reviewer", "role": "魔鬼代言人",
+     "goal": "质疑和验证结论，防止团队思维和共识谬误",
+     "backstory": "你天生怀疑一切，不轻易认同。你总是找反例和漏洞，逼迫团队思考得更深入。你的价值在于别人都同意时你说'等等，万一呢？'"},
+]
+
+
+def _make_default_agents(model: str, tool_names: list[str]) -> list[AgentConfig]:
+    return [AgentConfig(**a, model=model, tools=tool_names if tool_names else []) for a in _DEFAULT_AGENTS]
+
+
+def _save_topic_session(topic: str, result) -> None:
+    """保存话题讨论总结到 data/sessions/topics/"""
+    sessions_dir = Path("data/sessions/topics")
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    safe_topic = re.sub(r'[\\/:*?"<>|]', "_", topic)[:30]
+    filename = f"{ts}_{safe_topic}.json"
+    data = {
+        "topic": topic,
+        "timestamp": ts,
+        "rounds": result.rounds,
+        "total_tokens": result.total_tokens,
+        "stop_reason": result.stop_reason,
+        "summary": result.summary,
+        "message_count": len(result.messages),
+    }
+    with open(sessions_dir / filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 @app.command()
-def chat(
+def topic(
     topic: str = typer.Argument(help="讨论话题"),
     config: Path | None = typer.Option(None, "--config", "-c", help="YAML配置文件路径"),
     scheduler: str = typer.Option(
@@ -105,33 +145,7 @@ def chat(
         if not workspace:
             workspace = cfg.get("workspace")
     else:
-        # 默认3人组
-        agents = [
-            AgentConfig(
-                name="researcher",
-                role="资深研究员",
-                goal="深入调研问题，提供信息支撑，善于发现关键细节",
-                backstory="你是一位严谨的研究员，擅长搜索和整理信息。你总是先搞清楚问题的全貌，再让别人介入讨论。你会用数据和事实说话，不凭直觉下结论。",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-            AgentConfig(
-                name="architect",
-                role="系统架构师",
-                goal="设计方案，评估可行性和风险，做出权衡取舍",
-                backstory="你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。你倾向简洁可靠的方案，而不是过度设计。",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-            AgentConfig(
-                name="reviewer",
-                role="魔鬼代言人",
-                goal="质疑和验证结论，防止团队思维和共识谬误",
-                backstory="你天生怀疑一切，不轻易认同。你总是找反例和漏洞，逼迫团队思考得更深入。你的价值在于别人都同意时你说'等等，万一呢？'",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-        ]
+        agents = _make_default_agents(model, tool_names)
 
     # API Key: CLI参数 > 环境变量 > 配置文件
     effective_api_key = api_key or os.environ.get("OPENAI_API_KEY")
@@ -168,6 +182,9 @@ def chat(
     result = room.chat(topic)
     display.print_result(result)
 
+    # 保存会话总结
+    _save_topic_session(topic, result)
+
 
 @app.command()
 def room(
@@ -189,7 +206,7 @@ def room(
 
     # --list: 列出所有会话
     if list_sessions:
-        store = SessionStore()
+        store = SessionStore(Path("data/sessions/freechat"))
         sessions = store.list_sessions()
         if not sessions:
             typer.echo("暂无保存的会话。")
@@ -210,38 +227,13 @@ def room(
         if not tool_names and "tools" in cfg:
             tool_names = _setup_tools(",".join(cfg["tools"]), search)
     else:
-        agents = [
-            AgentConfig(
-                name="researcher",
-                role="资深研究员",
-                goal="深入调研问题，提供信息支撑",
-                backstory="你是一位严谨的研究员，擅长搜索和整理信息。你会用数据和事实说话，不凭直觉下结论。",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-            AgentConfig(
-                name="architect",
-                role="系统架构师",
-                goal="设计方案，评估可行性和风险，做出权衡取舍",
-                backstory="你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-            AgentConfig(
-                name="reviewer",
-                role="魔鬼代言人",
-                goal="质疑和验证结论，防止团队思维",
-                backstory="你天生怀疑一切，不轻易认同。你的价值在于别人都同意时你说'等等，万一呢？'",
-                model=model,
-                tools=tool_names if tool_names else [],
-            ),
-        ]
+        agents = _make_default_agents(model, tool_names)
 
     effective_api_key = api_key or os.environ.get("OPENAI_API_KEY")
     effective_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     workspace_root = workspace or "./data/workspaces"
 
-    store = SessionStore()
+    store = SessionStore(Path("data/sessions/freechat"))
     session_id = None
 
     # --resume: 恢复会话

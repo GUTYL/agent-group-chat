@@ -256,6 +256,26 @@ class WebFetchTool(ToolBase):
             },
         }
 
+    def _format_result(self, url: str, text: str, extractor: str, final_url: str = "",
+                       title: str = "", max_chars: int = 0) -> str:
+        """统一格式化抓取结果为字符串"""
+        truncated = len(text) > max_chars
+        if truncated:
+            text = text[:max_chars]
+        text = f"{_UNTRUSTED_BANNER}\n\n{text}"
+
+        lines = [f"URL: {url}"]
+        if final_url and final_url != url:
+            lines.append(f"Final URL: {final_url}")
+        lines.append(f"Extractor: {extractor}")
+        if title:
+            lines.append(f"Title: {title}")
+        lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
+        lines.append("")
+        lines.append(text)
+
+        return "\n".join(lines)
+
     # ── Jina Reader ──────────────────────────────────────
 
     def _try_jina_reader(self, url: str, max_chars: int) -> str | None:
@@ -288,24 +308,7 @@ class WebFetchTool(ToolBase):
             if title and not text.startswith(f"# {title}"):
                 text = f"# {title}\n\n{text}"
 
-            truncated = len(text) > max_chars
-            if truncated:
-                text = text[:max_chars]
-
-            text = f"{_UNTRUSTED_BANNER}\n\n{text}"
-
-            lines = [
-                f"URL: {url}",
-                f"Final URL: {final_url}",
-                "Extractor: jina",
-            ]
-            if title:
-                lines.append(f"Title: {title}")
-            lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
-            lines.append("")
-            lines.append(text)
-
-            return "\n".join(lines)
+            return self._format_result(url, text, "jina", final_url, title, max_chars)
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
@@ -381,25 +384,7 @@ class WebFetchTool(ToolBase):
         else:
             text = body
 
-        truncated = len(text) > max_chars
-        if truncated:
-            text = text[:max_chars]
-
-        text = f"{_UNTRUSTED_BANNER}\n\n{text}"
-
-        lines = [
-            f"URL: {url}",
-        ]
-        if final_url != url:
-            lines.append(f"Final URL: {final_url}")
-        lines.append(f"Extractor: {extractor}")
-        if title:
-            lines.append(f"Title: {title}")
-        lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
-        lines.append("")
-        lines.append(text)
-
-        return "\n".join(lines)
+        return self._format_result(url, text, extractor, final_url, title, max_chars)
 
     # ── Execute ──────────────────────────────────────────
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from agc.core.agent import AgentConfig
@@ -72,7 +73,7 @@ class FreeChatSession(ChatSession):
         self.user_name = user_name
         self.current_topic: str | None = None
         self.session_id = session_id or ""
-        self._session_store = session_store or SessionStore()
+        self._session_store = session_store or SessionStore(Path("data/sessions/freechat"))
         self._recent_window = recent_window
         self._system_prompts: dict[str, str] = {}
         self._named = False
