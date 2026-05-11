@@ -150,6 +150,9 @@ class ChatSession(ABC):
 
     def _create_final_message(self, agent: AgentConfig, response, round_idx: int) -> Message:
         content = response.content.strip()
+        # 部分模型会将 [name] 格式的 prompt 解析为对话格式，回复时以 ": " 开头
+        if content.startswith(": "):
+            content = content[2:].strip()
         mentions = self._parse_mentions(content)
         return Message(
             sender=agent.name,

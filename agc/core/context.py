@@ -62,7 +62,7 @@ class ContextManager:
         messages.append(
             {
                 "role": "user",
-                "content": f"[{agent.name}] 现在轮到你发言，请基于你的角色视角 contribute to the discussion。如果有想@的人请用 @名字 格式。",
+                "content": f"（轮到 @{agent.name}）请基于你的角色视角参与讨论。如果有想@的人请用 @名字 格式。",
             }
         )
         return messages
@@ -100,7 +100,7 @@ class ContextManager:
         messages.append(
             {
                 "role": "user",
-                "content": f"[{agent.name}] 有人发了一条消息，根据需要简洁回应。如果跟你无关可以不用回复。@名字 来指定对话对象。",
+                "content": f"（@{agent.name} 该你了）有人发了一条消息，根据需要简洁回应。如果跟你无关可以不用回复。@名字 来指定对话对象。",
             }
         )
         return messages
