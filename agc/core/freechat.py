@@ -39,6 +39,8 @@ SLASH_COMMANDS = {
     "/help": "显示所有命令",
 }
 
+AUTO_CONTINUE_MAX = 3  # 用户发言后，agent 间 @mention 自动延续的最大轮数
+
 
 class FreeChatSession(ChatSession):
     """IM风格自由群聊 — 用户随时输入，scheduler决定谁回应"""
@@ -124,11 +126,26 @@ class FreeChatSession(ChatSession):
             response_plan = self._scheduler.plan_responses(self.history)
 
             round_msgs = [user_msg]
+            # 首轮：让 scheduler 选出该回的 agent
             for agent in response_plan:
                 self._emit_speaker_start(agent.name, agent.role, agent.model)
                 agent_msgs, tokens = self._generate_response(agent)
                 round_msgs.extend(agent_msgs)
                 self._total_tokens += tokens
+
+            # 自动延续：agent @mention 其他人时，继续让被@的agent回应
+            for _ in range(AUTO_CONTINUE_MAX):
+                last_msg = self.history[-1] if self.history else None
+                if not last_msg or not last_msg.has_mentions:
+                    break
+                extra_plan = self._scheduler.plan_responses(self.history)
+                if not extra_plan:
+                    break
+                for agent in extra_plan:
+                    self._emit_speaker_start(agent.name, agent.role, agent.model)
+                    agent_msgs, tokens = self._generate_response(agent)
+                    round_msgs.extend(agent_msgs)
+                    self._total_tokens += tokens
 
             self._session_store.append(self.session_id, round_msgs)
 
