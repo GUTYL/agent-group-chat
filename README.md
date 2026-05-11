@@ -4,11 +4,11 @@
 
 ## 特性
 
-- **两种模式** — 话题驱动讨论（`agc chat`）+ IM风格自由群聊（`agc room`），各取所需
+- **两种模式** — 话题驱动讨论（`agc topic`）+ IM风格自由群聊（`agc room`），各取所需
 - **智能调度** — Hybrid调度策略支持 @提及、关键词路由、LLM路由，自动选择最合适的发言人
-- **自动终止** — 共识检测 + 最大轮次双重保障，话题模式自动结束；自由群聊模式持续运行
-- **会话持久化** — 自由群聊自动保存到 `data/sessions/`，支持恢复历史会话，LLM自动命名
-- **工具生态** — 内置网页搜索（DuckDuckGo）、网页抓取、工作空间（文件读写+代码执行）、持久化记忆
+- **自动终止** — 共识检测 + 最大轮次双重保障，话题模式自动结束并生成总结；自由群聊模式持续运行
+- **会话持久化** — 话题模式自动保存总结到 `data/sessions/topics/`，自由群聊保存到 `data/sessions/freechat/`，支持恢复历史会话
+- **工具生态** — 内置网页搜索（DuckDuckGo）、网页抓取（Jina Reader + readability-lxml 双提取器 + SSRF防护）、工作空间（文件读写+代码执行）、持久化记忆
 - **流式输出** — LLM 回复实时流式显示，打字机效果
 - **人类介入** — 话题模式支持 `always`（每轮等待）/ `on_demand`（随时介入）/ `off` 三种模式
 - **YAML配置** — 用声明式配置文件定义Agent和群聊参数
@@ -45,14 +45,14 @@ export OPENAI_BASE_URL="https://api.deepseek.com/v1"
 
 ### CLI 方式
 
-#### 话题讨论模式（agc chat）
+#### 话题讨论模式（agc topic）
 
 ```bash
 # 默认角色组（研究员+架构师+审查者）
-agc chat "API限流策略应该怎么选？"
+agc topic "API限流策略应该怎么选？"
 
 # 自定义参数
-agc chat "如何设计高并发消息队列" \
+agc topic "如何设计高并发消息队列" \
   --scheduler hybrid \
   --max-rounds 15 \
   --model gpt-4o \
@@ -61,7 +61,7 @@ agc chat "如何设计高并发消息队列" \
   --human on_demand
 
 # 使用YAML配置文件
-agc chat "微服务还是单体？" --config examples/03_yaml_config.yaml
+agc topic "微服务还是单体？" --config examples/03_yaml_config.yaml
 ```
 
 #### 自由群聊模式（agc room）
@@ -195,7 +195,7 @@ agc/
 │   ├── max_rounds.py     # 硬性轮次上限
 │   └── composite.py      # 组合终止器（OR逻辑）
 ├── tools/           # Agent工具
-│   ├── web_fetch.py      # 网页抓取（readability-lxml）
+│   ├── web_fetch.py      # 网页抓取（Jina Reader优先 + readability-lxml兜底 + SSRF防护）
 │   ├── search.py         # 网络搜索（DuckDuckGo）
 │   ├── memory.py         # 持久化记忆（save/recall/list/delete）
 │   └── workspace.py      # 工作空间（文件读写+代码执行）
@@ -239,7 +239,7 @@ agc/
   2. 用户消息写入共享历史
   3. `Scheduler.plan_responses()` 决定哪些Agent回应
   4. Agent 依次生成回复
-  5. 会话持久化到 `data/sessions/{name}.jsonl`
+  5. 会话持久化到 `data/sessions/freechat/{name}.jsonl`
   6. 用户 `/quit` 退出
 
 ### Scheduler — 调度策略
@@ -259,7 +259,7 @@ agc/
 
 | 工具 | 说明 | 注册条件 |
 |------|------|----------|
-| `web_fetch` | 抓取网页全文，提取可读内容 | 始终自动注册 |
+| `web_fetch` | 抓取网页全文（Jina Reader优先，readability-lxml兜底，含SSRF防护） | 始终自动注册 |
 | `web_search` | 搜索互联网（DuckDuckGo，免费无需 API Key） | 自动注册 |
 | `write_file` | 在Agent工作空间中写入文件 | 启用工作空间时注册 |
 | `read_file` | 读取自己或其他Agent的文件 | 启用工作空间时注册 |
@@ -285,7 +285,7 @@ agc/
 
 ```bash
 uv sync --extra dev          # 安装所有依赖
-uv run pytest tests/ -v       # 运行全部 78 个测试
+uv run pytest tests/ -v       # 运行全部 83 个测试
 uv run pytest tests/test_message.py::test_message_to_json -v  # 单个测试
 ```
 
