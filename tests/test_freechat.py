@@ -12,8 +12,12 @@ def _set_dummy_api_key(monkeypatch):
 
 def _make_agents():
     return [
-        AgentConfig(name="researcher", role="研究员", goal="研究", backstory="研究员背景", model="test"),
-        AgentConfig(name="architect", role="架构师", goal="设计", backstory="架构师背景", model="test"),
+        AgentConfig(
+            name="researcher", role="研究员", goal="研究", backstory="研究员背景", model="test"
+        ),
+        AgentConfig(
+            name="architect", role="架构师", goal="设计", backstory="架构师背景", model="test"
+        ),
     ]
 
 

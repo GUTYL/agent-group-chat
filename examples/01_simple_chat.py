@@ -43,9 +43,9 @@ def main():
         name="demo",
         agents=agents,
         llm=llm,
-        tools=["web_search"],          # 启用搜索
+        tools=["web_search"],  # 启用搜索
         workspace_root="./data/workspaces",  # 每个agent独立工作空间
-        human=human,                    # 人类参与
+        human=human,  # 人类参与
     )
 
     # 6. 设置输出

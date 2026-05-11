@@ -1,6 +1,5 @@
 """02 自定义Agent配置示例"""
 
-from agc.core.agent import AgentConfig
 from agc.core.chatroom import ChatRoom
 from agc.llm import OpenAIClient
 from agc.templates import get_template

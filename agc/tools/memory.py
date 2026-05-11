@@ -159,10 +159,7 @@ class ListMemoriesTool(ToolBase):
         memories = self._load_memories(memory_file)
 
         if tag:
-            memories = {
-                k: v for k, v in memories.items()
-                if tag in v.get("tags", [])
-            }
+            memories = {k: v for k, v in memories.items() if tag in v.get("tags", [])}
 
         if not memories:
             tag_msg = f" 标签为 '{tag}'" if tag else ""
@@ -223,6 +220,7 @@ class DeleteMemoryTool(ToolBase):
 
 
 # ── 辅助函数 ──
+
 
 def _get_memory_path(self, owner: str) -> Path | None:
     """获取 agent 的记忆文件路径"""

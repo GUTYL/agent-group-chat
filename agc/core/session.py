@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from agc.core.agent import AgentConfig
 from agc.core.context import ContextManager
@@ -18,9 +20,12 @@ from agc.llm.openai_client import OpenAIClient
 from agc.schedulers.base import SchedulerBase
 from agc.schedulers.hybrid import HybridScheduler
 from agc.schedulers.round_robin import RoundRobinScheduler
-from agc.tools.base import get_schemas_for_tools
+from agc.tools.base import execute_tool_call, get_schemas_for_tools
 
 logger = logging.getLogger(__name__)
+
+MAX_TOOL_ROUNDS = 8
+MAX_TOOL_RESULT_LENGTH = 2000
 
 
 class ChatSession(ABC):
@@ -59,7 +64,9 @@ class ChatSession(ABC):
     # ── Initializers ───────────────────────────────────────
 
     @staticmethod
-    def _init_workspace(workspace_root: str | None, agents: list[AgentConfig]) -> WorkspaceManager | None:
+    def _init_workspace(
+        workspace_root: str | None, agents: list[AgentConfig]
+    ) -> WorkspaceManager | None:
         if not workspace_root:
             return None
         mgr = WorkspaceManager(workspace_root)
@@ -83,7 +90,9 @@ class ChatSession(ABC):
                 clients[agent.name] = llm
             else:
                 clients[agent.name] = OpenAIClient(
-                    api_key=agent_api_key, base_url=agent_base_url, default_model=agent.model,
+                    api_key=agent_api_key,
+                    base_url=agent_base_url,
+                    default_model=agent.model,
                 )
         return clients
 
@@ -116,13 +125,76 @@ class ChatSession(ABC):
 
     def _emit_system(self, content: str) -> Message:
         msg = Message(
-            sender="system", content=content, msg_type=MessageType.system,
+            sender="system",
+            content=content,
+            msg_type=MessageType.system,
             round_idx=len(self.history) // max(len(self.agents), 1),
         )
         self.history.append(msg)
         for cb in self._on_message_callbacks:
             cb(msg)
         return msg
+
+    # ── Shared helpers ─────────────────────────────────────
+
+    def _current_round(self) -> int:
+        return len(self.history) // max(len(self.agents), 1)
+
+    def _notify_display(self, msg: Message) -> None:
+        for cb in self._on_message_callbacks:
+            cb(msg)
+
+    def _parse_mentions(self, content: str) -> list[str]:
+        agent_names = {a.name for a in self.agents}
+        return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
+
+    def _create_final_message(self, agent: AgentConfig, response, round_idx: int) -> Message:
+        content = response.content.strip()
+        mentions = self._parse_mentions(content)
+        return Message(
+            sender=agent.name,
+            content=content,
+            msg_type=MessageType.mention if mentions else MessageType.chat,
+            mentions=mentions,
+            round_idx=round_idx,
+            reasoning_content=response.reasoning_content,
+            metadata={
+                "tokens": response.total_tokens,
+                "model": response.model,
+                "finish_reason": response.finish_reason,
+            },
+        )
+
+    def _create_tool_messages(self, agent: AgentConfig, response, round_idx: int) -> list[Message]:
+        messages = []
+        assistant_msg = Message(
+            sender=agent.name,
+            content=response.content or "",
+            msg_type=MessageType.tool_call,
+            round_idx=round_idx,
+            tool_calls=response.tool_calls,
+            reasoning_content=response.reasoning_content,
+            metadata={"tokens": response.total_tokens, "model": response.model, "_emitted": True},
+        )
+        messages.append(assistant_msg)
+        for tc in response.tool_calls:
+            func_name = tc["function"]["name"]
+            func_args = tc["function"]["arguments"]
+            tool_result = execute_tool_call(func_name, func_args, owner=agent.name)
+            tool_msg = Message(
+                sender="tool",
+                content=tool_result.content[:MAX_TOOL_RESULT_LENGTH],
+                msg_type=MessageType.tool_result,
+                round_idx=round_idx,
+                tool_call_id=tc["id"],
+                metadata={
+                    "tool_name": func_name,
+                    "tool_success": tool_result.success,
+                    "_emitted": True,
+                },
+            )
+            messages.append(tool_msg)
+        return messages
 
     # ── Tools ──────────────────────────────────────────────
 
@@ -137,6 +209,7 @@ class ChatSession(ABC):
         if "web_fetch" in self._enabled_tools:
             return
         from agc.tools.web_fetch import register_web_fetch_tool
+
         register_web_fetch_tool()
         self._enabled_tools.append("web_fetch")
         logger.info("自动注册工具: web_fetch")
@@ -146,6 +219,7 @@ class ChatSession(ABC):
             return
         try:
             from agc.tools.search import create_search_tool
+
             if create_search_tool(provider="duckduckgo"):
                 self._enabled_tools.append("web_search")
                 logger.info("自动注册工具: web_search")
@@ -153,8 +227,9 @@ class ChatSession(ABC):
             logger.debug("无可用的搜索后端，跳过 web_search")
 
     def _register_workspace_tools(self) -> None:
-        from agc.tools.workspace import register_workspace_tools
         from agc.tools.memory import register_memory_tools
+        from agc.tools.workspace import register_workspace_tools
+
         for name in register_workspace_tools(self._workspace_mgr):
             if name not in self._enabled_tools:
                 self._enabled_tools.append(name)
@@ -171,27 +246,30 @@ class ChatSession(ABC):
             parts: list[str] = []
             if self._workspace_mgr:
                 ws_path = self._workspace_mgr.get(agent.name).path
-                parts.extend([
-                    f"\n## 你的工作空间",
-                    f"你有独立的工作空间目录: {ws_path}",
-                    f"可用工具: write_file / read_file / list_files / run_code",
-                    f"\n## 你的记忆",
-                    f"可用工具: save_memory / recall_memory / list_memories / delete_memory",
-                ])
+                parts.extend(
+                    [
+                        "\n## 你的工作空间",
+                        f"你有独立的工作空间目录: {ws_path}",
+                        "可用工具: write_file / read_file / list_files / run_code",
+                        "\n## 你的记忆",
+                        "可用工具: save_memory / recall_memory / list_memories / delete_memory",
+                    ]
+                )
             web_tools = [t for t in self._enabled_tools if t.startswith("web_")]
             if web_tools:
-                parts.extend([
-                    f"\n## 网络工具",
-                    f"可用: web_search, web_fetch",
-                    f"建议先用 web_search 找到链接，再用 web_fetch 阅读页面详情。",
-                ])
+                parts.extend(
+                    [
+                        "\n## 网络工具",
+                        "可用: web_search, web_fetch",
+                        "建议先用 web_search 找到链接，再用 web_fetch 阅读页面详情。",
+                    ]
+                )
             if parts:
                 prompts[agent.name] = "\n".join(parts)
         return prompts
 
     @abstractmethod
-    def run(self):
-        ...
+    def run(self): ...
 
 
 class SessionStore:
@@ -225,7 +303,7 @@ class SessionStore:
         if not path.exists():
             raise FileNotFoundError(f"会话不存在: {session_id}")
         messages = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

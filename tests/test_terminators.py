@@ -1,10 +1,10 @@
 """单元测试 — 终止检测器"""
 
 from agc.core.agent import AgentConfig
-from agc.core.message import Message, MessageType
-from agc.terminators.max_rounds import MaxRoundsTerminator
-from agc.terminators.consensus import ConsensusTerminator
+from agc.core.message import Message
 from agc.terminators.composite import CompositeTerminator
+from agc.terminators.consensus import ConsensusTerminator
+from agc.terminators.max_rounds import MaxRoundsTerminator
 
 
 def _make_agents():
@@ -28,7 +28,9 @@ def test_max_rounds_terminator():
 
     # 6条消息 = 3轮，到上限
     for i in range(4):
-        messages.append(Message(sender="alice" if i % 2 == 0 else "bob", content="msg", round_idx=2 + i))
+        messages.append(
+            Message(sender="alice" if i % 2 == 0 else "bob", content="msg", round_idx=2 + i)
+        )
     stop, reason = terminator.should_stop(messages, agents)
     assert stop
     assert "3" in reason
@@ -60,10 +62,12 @@ def test_consensus_terminator():
 
 def test_composite_terminator():
     agents = _make_agents()
-    terminator = CompositeTerminator([
-        ConsensusTerminator(window=3),
-        MaxRoundsTerminator(max_rounds=5),
-    ])
+    terminator = CompositeTerminator(
+        [
+            ConsensusTerminator(window=3),
+            MaxRoundsTerminator(max_rounds=5),
+        ]
+    )
 
     # 还没到
     messages = [Message(sender="alice", content="hi", round_idx=i) for i in range(4)]

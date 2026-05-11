@@ -9,14 +9,10 @@ from typing import Any
 
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
-from agc.core.session import ChatSession, SessionStore
+from agc.core.session import MAX_TOOL_ROUNDS, ChatSession, SessionStore
 from agc.llm.base import LLMResponse
-from agc.tools.base import execute_tool_call
 
 logger = logging.getLogger(__name__)
-
-MAX_TOOL_ROUNDS = 8
-MAX_TOOL_RESULT_LENGTH = 2000
 
 FREECHAT_SYSTEM_PROMPT = """你是一个群聊助手。你的名字是{name}，角色是{role}。
 {backstory}
@@ -63,9 +59,15 @@ class FreeChatSession(ChatSession):
         recent_window: int = 30,
     ):
         super().__init__(
-            agents=agents, llm=llm, context_window=context_window,
-            base_url=base_url, api_key=api_key, stream=stream,
-            workspace_root=workspace_root, tools=tools, scheduler=scheduler,
+            agents=agents,
+            llm=llm,
+            context_window=context_window,
+            base_url=base_url,
+            api_key=api_key,
+            stream=stream,
+            workspace_root=workspace_root,
+            tools=tools,
+            scheduler=scheduler,
         )
         self.user_name = user_name
         self.current_topic: str | None = None
@@ -86,6 +88,7 @@ class FreeChatSession(ChatSession):
 
         try:
             from prompt_toolkit import PromptSession
+
             session = PromptSession()
             use_pt = True
         except ImportError:
@@ -133,15 +136,16 @@ class FreeChatSession(ChatSession):
         try:
             from rich.console import Console
             from rich.panel import Panel
+
             console = Console()
-            agents_text = "\n".join(
-                f"  @{a.name} · {a.role}" for a in self.agents
+            agents_text = "\n".join(f"  @{a.name} · {a.role}" for a in self.agents)
+            console.print(
+                Panel(
+                    f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
+                    title="自由群聊",
+                    border_style="bright_blue",
+                )
             )
-            console.print(Panel(
-                f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
-                title="自由群聊",
-                border_style="bright_blue",
-            ))
         except ImportError:
             print(f"\n群聊已开始！参与者: {', '.join(f'@{a.name}' for a in self.agents)}")
             print("输入消息参与讨论。/help 查看命令 | /quit 退出\n")
@@ -159,8 +163,10 @@ class FreeChatSession(ChatSession):
             other_agents += f", @{self.user_name}(用户)"
 
             prompt = FREECHAT_SYSTEM_PROMPT.format(
-                name=agent.name, role=agent.role,
-                backstory=agent.backstory, goal=agent.goal,
+                name=agent.name,
+                role=agent.role,
+                backstory=agent.backstory,
+                goal=agent.goal,
                 other_agents=other_agents,
             )
             prompt += extra_prompts.get(agent.name, "") + time_hint
@@ -176,11 +182,6 @@ class FreeChatSession(ChatSession):
             mentions=mentions,
         )
 
-    def _parse_mentions(self, content: str) -> list[str]:
-        """解析@mention"""
-        agent_names = {a.name for a in self.agents}
-        return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
-
     def _generate_response(self, agent: AgentConfig) -> tuple[list[Message], int]:
         """生成单个agent的回复（带工具循环）"""
         agent_tools = self._resolve_tools(agent)
@@ -191,7 +192,9 @@ class FreeChatSession(ChatSession):
         for _ in range(MAX_TOOL_ROUNDS + 1):
             ctx = self._build_context(agent)
             response = llm.chat(
-                messages=ctx, model=agent.model, temperature=agent.temperature,
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
                 tools=agent_tools or None,
                 on_chunk=self._emit_chunk if self._stream else None,
             )
@@ -201,7 +204,7 @@ class FreeChatSession(ChatSession):
                 self._execute_tool_calls(agent, response, result_messages)
                 continue
 
-            final_msg = self._create_final_message(agent, response)
+            final_msg = self._create_final_message(agent, response, self._current_round())
             self._emit_message(final_msg)
             result_messages.append(final_msg)
             break
@@ -223,64 +226,38 @@ class FreeChatSession(ChatSession):
         )
 
     def _execute_tool_calls(
-        self, agent: AgentConfig, response: LLMResponse, result_messages: list[Message],
+        self,
+        agent: AgentConfig,
+        response: LLMResponse,
+        result_messages: list[Message],
     ) -> None:
-        """执行工具调用"""
-        round_idx = len(self.history) // max(len(self.agents), 1)
-        assistant_msg = Message(
-            sender=agent.name, content=response.content or "",
-            msg_type=MessageType.tool_call, round_idx=round_idx,
-            tool_calls=response.tool_calls,
-            reasoning_content=response.reasoning_content,
-            metadata={"tokens": response.total_tokens, "model": response.model, "_emitted": True},
-        )
-        result_messages.append(assistant_msg)
-        self._emit_message(assistant_msg)
-
-        for tc in response.tool_calls:
-            func_name = tc["function"]["name"]
-            func_args = tc["function"]["arguments"]
-            tool_result = execute_tool_call(func_name, func_args, owner=agent.name)
-            tool_msg = Message(
-                sender="tool", content=tool_result.content[:MAX_TOOL_RESULT_LENGTH],
-                msg_type=MessageType.tool_result, round_idx=round_idx,
-                tool_call_id=tc["id"],
-                metadata={"tool_name": func_name, "tool_success": tool_result.success, "_emitted": True},
-            )
-            result_messages.append(tool_msg)
-            self._emit_message(tool_msg)
+        round_idx = self._current_round()
+        msgs = self._create_tool_messages(agent, response, round_idx)
+        result_messages.extend(msgs)
+        for msg in msgs:
+            self._emit_message(msg)
 
     def _force_text_response(
-        self, agent: AgentConfig, llm: Any, result_messages: list[Message],
+        self,
+        agent: AgentConfig,
+        llm: Any,
+        result_messages: list[Message],
     ) -> None:
         """强制无工具回复"""
         try:
             ctx = self._build_context(agent)
             response = llm.chat(
-                messages=ctx, model=agent.model, temperature=agent.temperature,
-                tools=None, on_chunk=self._emit_chunk if self._stream else None,
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
+                tools=None,
+                on_chunk=self._emit_chunk if self._stream else None,
             )
-            final_msg = self._create_final_message(agent, response)
+            final_msg = self._create_final_message(agent, response, self._current_round())
             self._emit_message(final_msg)
             result_messages.append(final_msg)
         except Exception as e:
             logger.warning(f"强制无工具回复失败: {e}")
-
-    def _create_final_message(self, agent: AgentConfig, response: LLMResponse) -> Message:
-        """创建最终回复消息"""
-        content = response.content.strip()
-        mentions = self._parse_mentions(content)
-        round_idx = len(self.history) // max(len(self.agents), 1)
-        return Message(
-            sender=agent.name, content=content,
-            msg_type=MessageType.mention if mentions else MessageType.chat,
-            mentions=mentions, round_idx=round_idx,
-            reasoning_content=response.reasoning_content,
-            metadata={
-                "tokens": response.total_tokens, "model": response.model,
-                "finish_reason": response.finish_reason,
-            },
-        )
 
     def _emit_message(self, msg: Message) -> None:
         """发射消息到所有回调，同时加入history"""
@@ -336,6 +313,7 @@ class FreeChatSession(ChatSession):
 
         try:
             from rich.console import Console
+
             console = Console()
             console.print(f"[yellow]未知命令: {cmd}[/yellow]  输入 /help 查看帮助")
         except ImportError:
@@ -345,6 +323,7 @@ class FreeChatSession(ChatSession):
     def _show_help(self) -> None:
         try:
             from rich.console import Console
+
             console = Console()
             console.print("\n[bold]可用命令:[/bold]")
             for k, v in SLASH_COMMANDS.items():
@@ -362,6 +341,7 @@ class FreeChatSession(ChatSession):
             return
         try:
             from rich.console import Console
+
             console = Console()
             for msg in recent:
                 if msg.msg_type == MessageType.system:
@@ -378,6 +358,7 @@ class FreeChatSession(ChatSession):
         """显示群中的agent列表"""
         try:
             from rich.console import Console
+
             console = Console()
             console.print("\n[bold]群聊参与者:[/bold]")
             for a in self.agents:
@@ -404,7 +385,8 @@ class FreeChatSession(ChatSession):
 
         response = self.llm.chat(
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3, max_tokens=30,
+            temperature=0.3,
+            max_tokens=30,
         )
         name = response.content.strip()
         name = re.sub(r'["""\n\r]', "", name)
@@ -413,7 +395,7 @@ class FreeChatSession(ChatSession):
     def _save_session(self) -> None:
         """保存会话（在退出时调用）"""
         if self.session_id and self.history:
-            unsaved = [m for m in self.history if not getattr(m, '_saved', False)]
+            unsaved = [m for m in self.history if not getattr(m, "_saved", False)]
             if unsaved:
                 self._session_store.append(self.session_id, unsaved)
 

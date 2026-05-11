@@ -2,29 +2,29 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class AgentConfig(BaseModel):
     """群聊中的 Agent 参与者配置"""
 
-    name: str                         # 唯一标识（英文，如 researcher）
-    role: str                         # 角色名（如 "资深研究员"）
-    goal: str                         # 目标（如 "深入调研问题，提供信息支撑"）
-    backstory: str                    # 背景人设
-    model: str = "gpt-4o"            # 使用的LLM模型
-    base_url: str | None = None     # LLM API端点（None=用默认/全局配置）
-    api_key: str | None = None      # API Key（None=用环境变量）
-    system_prompt_extra: str = ""     # 额外追加到system prompt的内容
-    tools: list[str] = []             # 可用工具名列表（如 ["web_search"]）
-    max_turns: int = 0                # 该agent最多发言次数，0=不限
-    temperature: float = 0.7          # 生成温度
+    name: str  # 唯一标识（英文，如 researcher）
+    role: str  # 角色名（如 "资深研究员"）
+    goal: str  # 目标（如 "深入调研问题，提供信息支撑"）
+    backstory: str  # 背景人设
+    model: str = "gpt-4o"  # 使用的LLM模型
+    base_url: str | None = None  # LLM API端点（None=用默认/全局配置）
+    api_key: str | None = None  # API Key（None=用环境变量）
+    system_prompt_extra: str = ""  # 额外追加到system prompt的内容
+    tools: list[str] = []  # 可用工具名列表（如 ["web_search"]）
+    max_turns: int = 0  # 该agent最多发言次数，0=不限
+    temperature: float = 0.7  # 生成温度
 
-    def build_system_prompt(self, topic: str, all_agents: list["AgentConfig"], extra: str = "") -> str:
+    def build_system_prompt(
+        self, topic: str, all_agents: list[AgentConfig], extra: str = ""
+    ) -> str:
         """构建完整的 system prompt"""
-        agents_desc = "\n".join(
-            f"- {a.name} ({a.role}): {a.goal}" for a in all_agents
-        )
+        agents_desc = "\n".join(f"- {a.name} ({a.role}): {a.goal}" for a in all_agents)
         prompt = f"""你正在参与一个群聊讨论。
 
 ## 你的身份

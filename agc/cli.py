@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import typer
 import yaml
@@ -59,37 +58,30 @@ def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
 @app.command()
 def chat(
     topic: str = typer.Argument(help="讨论话题"),
-    config: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="YAML配置文件路径"
-    ),
+    config: Path | None = typer.Option(None, "--config", "-c", help="YAML配置文件路径"),
     scheduler: str = typer.Option(
         "hybrid", "--scheduler", "-s", help="调度策略: round_robin / hybrid"
     ),
     max_rounds: int = typer.Option(20, "--max-rounds", "-r", help="最大轮数"),
-    model: str = typer.Option(os.environ.get("OPENAI_MODEL", "gpt-4o"), "--model", "-m", help="默认LLM模型"),
-    base_url: Optional[str] = typer.Option(
+    model: str = typer.Option(
+        os.environ.get("OPENAI_MODEL", "gpt-4o"), "--model", "-m", help="默认LLM模型"
+    ),
+    base_url: str | None = typer.Option(
         None, "--base-url", "-b", help="LLM API端点(如 https://api.deepseek.com/v1)"
     ),
-    api_key: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(
         None, "--api-key", "-k", help="API Key(也可用OPENAI_API_KEY环境变量)"
     ),
-    tools: Optional[str] = typer.Option(
+    tools: str | None = typer.Option(
         None, "--tools", "-t", help="额外启用的工具(逗号分隔)，如: web_search。其他工具自动注册。"
     ),
-    search: str = typer.Option(
-        "duckduckgo", "--search", help="搜索后端: duckduckgo"
-    ),
-    workspace: Optional[str] = typer.Option(
+    search: str = typer.Option("duckduckgo", "--search", help="搜索后端: duckduckgo"),
+    workspace: str | None = typer.Option(
         None, "--workspace", "-w", help="工作空间目录(默认: ./data/workspaces)"
     ),
-    human: str = typer.Option(
-        "off", "--human", help="人类介入模式: off / always / on_demand"
-    ),
-    human_name: str = typer.Option(
-        "human", "--human-name", help="人类在群聊中的名字"
-    ),
+    human: str = typer.Option("off", "--human", help="人类介入模式: off / always / on_demand"),
+    human_name: str = typer.Option("human", "--human-name", help="人类在群聊中的名字"),
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="是否显示详细过程"),
-
 ):
     """启动一个多Agent群聊讨论"""
 
@@ -167,6 +159,7 @@ def chat(
 
     # 设置输出
     from agc.ui import CliDisplay
+
     display = CliDisplay()
     room.on_message(display.on_message)
     room.on_chunk(display.on_chunk)
@@ -178,39 +171,19 @@ def chat(
 
 @app.command()
 def room(
-    config: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="YAML配置文件路径"
-    ),
-    name: Optional[str] = typer.Option(
-        None, "--name", help="指定会话名称（跳过LLM自动命名）"
-    ),
-    resume: Optional[str] = typer.Option(
-        None, "--resume", help="恢复历史会话（支持前缀匹配）"
-    ),
-    list_sessions: bool = typer.Option(
-        False, "--list", help="列出所有历史会话"
-    ),
+    config: Path | None = typer.Option(None, "--config", "-c", help="YAML配置文件路径"),
+    name: str | None = typer.Option(None, "--name", help="指定会话名称（跳过LLM自动命名）"),
+    resume: str | None = typer.Option(None, "--resume", help="恢复历史会话（支持前缀匹配）"),
+    list_sessions: bool = typer.Option(False, "--list", help="列出所有历史会话"),
     model: str = typer.Option(
         os.environ.get("OPENAI_MODEL", "gpt-4o"), "--model", "-m", help="默认LLM模型"
     ),
-    base_url: Optional[str] = typer.Option(
-        None, "--base-url", "-b", help="LLM API端点"
-    ),
-    api_key: Optional[str] = typer.Option(
-        None, "--api-key", "-k", help="API Key"
-    ),
-    tools: Optional[str] = typer.Option(
-        None, "--tools", "-t", help="额外启用的工具(逗号分隔)"
-    ),
-    search: str = typer.Option(
-        "duckduckgo", "--search", help="搜索后端: duckduckgo"
-    ),
-    workspace: Optional[str] = typer.Option(
-        None, "--workspace", "-w", help="工作空间目录"
-    ),
-    user_name: str = typer.Option(
-        "human", "--user-name", help="人类用户在群聊中的名字"
-    ),
+    base_url: str | None = typer.Option(None, "--base-url", "-b", help="LLM API端点"),
+    api_key: str | None = typer.Option(None, "--api-key", "-k", help="API Key"),
+    tools: str | None = typer.Option(None, "--tools", "-t", help="额外启用的工具(逗号分隔)"),
+    search: str = typer.Option("duckduckgo", "--search", help="搜索后端: duckduckgo"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="工作空间目录"),
+    user_name: str = typer.Option("human", "--user-name", help="人类用户在群聊中的名字"),
 ):
     """启动IM风格自由群聊"""
 
@@ -239,22 +212,28 @@ def room(
     else:
         agents = [
             AgentConfig(
-                name="researcher", role="资深研究员",
+                name="researcher",
+                role="资深研究员",
                 goal="深入调研问题，提供信息支撑",
                 backstory="你是一位严谨的研究员，擅长搜索和整理信息。你会用数据和事实说话，不凭直觉下结论。",
-                model=model, tools=tool_names if tool_names else [],
+                model=model,
+                tools=tool_names if tool_names else [],
             ),
             AgentConfig(
-                name="architect", role="系统架构师",
+                name="architect",
+                role="系统架构师",
                 goal="设计方案，评估可行性和风险，做出权衡取舍",
                 backstory="你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。",
-                model=model, tools=tool_names if tool_names else [],
+                model=model,
+                tools=tool_names if tool_names else [],
             ),
             AgentConfig(
-                name="reviewer", role="魔鬼代言人",
+                name="reviewer",
+                role="魔鬼代言人",
                 goal="质疑和验证结论，防止团队思维",
                 backstory="你天生怀疑一切，不轻易认同。你的价值在于别人都同意时你说'等等，万一呢？'",
-                model=model, tools=tool_names if tool_names else [],
+                model=model,
+                tools=tool_names if tool_names else [],
             ),
         ]
 
@@ -299,6 +278,7 @@ def room(
 
     # 设置显示
     from agc.ui import CliDisplay
+
     display = CliDisplay()
     session.on_message(display.on_message)
     session.on_chunk(display.on_chunk)
@@ -329,6 +309,7 @@ def agents():
 def tools_list():
     """列出可用的工具"""
     from agc.tools.base import list_tools
+
     available = list_tools()
     if not available:
         typer.echo("暂无已注册工具。工具会在启动群聊时自动注册。")

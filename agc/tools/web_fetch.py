@@ -14,7 +14,6 @@ import html
 import json
 import logging
 import re
-from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -58,23 +57,23 @@ def _sanitize(text: str) -> str:
 
 def _strip_tags(text: str) -> str:
     """移除HTML标签并解码实体"""
-    text = re.sub(r'<script[\s\S]*?</script>', '', text, flags=re.I)
-    text = re.sub(r'<style[\s\S]*?</style>', '', text, flags=re.I)
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
     return html.unescape(text).strip()
 
 
 def _normalize(text: str) -> str:
     """规范空白字符"""
-    text = re.sub(r'[ \t]+', ' ', text)
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _validate_url(url: str) -> tuple[bool, str]:
     """校验URL格式"""
     try:
         p = urlparse(url)
-        if p.scheme not in ('http', 'https'):
+        if p.scheme not in ("http", "https"):
             return False, f"仅允许 http/https，收到 '{p.scheme or 'none'}'"
         if not p.netloc:
             return False, "缺少域名"
@@ -98,43 +97,45 @@ def _html_to_markdown(html_content: str, title: str = "") -> str:
     text = html_content
 
     # 移除 script/style
-    text = re.sub(r'<script[\s\S]*?</script>', '', text, flags=re.I)
-    text = re.sub(r'<style[\s\S]*?</style>', '', text, flags=re.I)
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
 
     # 标题
     for i in range(1, 7):
-        tag = f'h{i}'
+        tag = f"h{i}"
         text = re.sub(
-            rf'<{tag}[^>]*>(.*?)</{tag}>',
-            rf'{"#" * i} \1',
-            text, flags=re.I | re.S,
+            rf"<{tag}[^>]*>(.*?)</{tag}>",
+            rf"{'#' * i} \1",
+            text,
+            flags=re.I | re.S,
         )
 
     # 链接
     text = re.sub(
         r'<a[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>',
-        r'[\2](\1)',
-        text, flags=re.I | re.S,
+        r"[\2](\1)",
+        text,
+        flags=re.I | re.S,
     )
 
     # 粗体/斜体
-    text = re.sub(r'<(strong|b)[^>]*>(.*?)</\1>', r'**\2**', text, flags=re.I | re.S)
-    text = re.sub(r'<(em|i)[^>]*>(.*?)</\1>', r'*\2*', text, flags=re.I | re.S)
+    text = re.sub(r"<(strong|b)[^>]*>(.*?)</\1>", r"**\2**", text, flags=re.I | re.S)
+    text = re.sub(r"<(em|i)[^>]*>(.*?)</\1>", r"*\2*", text, flags=re.I | re.S)
 
     # 代码块
-    text = re.sub(r'<pre[^>]*>(.*?)</pre>', r'```\n\1\n```', text, flags=re.I | re.S)
-    text = re.sub(r'<code[^>]*>(.*?)</code>', r'`\1`', text, flags=re.I | re.S)
+    text = re.sub(r"<pre[^>]*>(.*?)</pre>", r"```\n\1\n```", text, flags=re.I | re.S)
+    text = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", text, flags=re.I | re.S)
 
     # 列表
-    text = re.sub(r'<li[^>]*>(.*?)</li>', r'- \1', text, flags=re.I | re.S)
+    text = re.sub(r"<li[^>]*>(.*?)</li>", r"- \1", text, flags=re.I | re.S)
 
     # 段落 → 换行
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.I)
-    text = re.sub(r'</?p[^>]*>', '\n', text, flags=re.I)
-    text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.I)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</?p[^>]*>", "\n", text, flags=re.I)
+    text = re.sub(r"</?div[^>]*>", "\n", text, flags=re.I)
 
     # 移除剩余标签
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
 
     # 清理多余空白
@@ -201,7 +202,7 @@ class WebFetchTool(ToolBase):
     ) -> ToolResult:
         """抓取 URL 并提取内容（同步版本）"""
         max_chars = max_chars or self.max_chars
-        url = url.strip(' \t\r\n`"\'')
+        url = url.strip(" \t\r\n`\"'")
 
         # URL 校验
         is_valid, error_msg = _validate_url(url)
@@ -250,6 +251,7 @@ class WebFetchTool(ToolBase):
             # HTML 页面 → readability 提取
             try:
                 from readability import Document
+
                 doc = Document(body)
                 title = doc.title()
                 summary_html = doc.summary()
@@ -277,7 +279,7 @@ class WebFetchTool(ToolBase):
         # 截断
         truncated = len(text) > max_chars
         if truncated:
-            text = text[:max_chars] + "\n\n... (内容已截断，共 {} 字符)".format(len(text))
+            text = text[:max_chars] + f"\n\n... (内容已截断，共 {len(text)} 字符)"
 
         # 添加安全提示
         text = f"{_UNTRUSTED_BANNER}\n\n{text}"
@@ -291,7 +293,7 @@ class WebFetchTool(ToolBase):
         result_lines.append(f"Extractor: {extractor}")
         if title:
             result_lines.append(f"Title: {title}")
-        result_lines.append(f"Length: {len(text)} chars" + (f" (truncated)" if truncated else ""))
+        result_lines.append(f"Length: {len(text)} chars" + (" (truncated)" if truncated else ""))
         result_lines.append("")
         result_lines.append(text)
 

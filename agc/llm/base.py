@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 
 @dataclass
 class LLMResponse:
     """LLM 响应"""
 
-    content: str                             # 回复文本
-    model: str = ""                          # 使用的模型
-    prompt_tokens: int = 0                   # 输入token数
-    completion_tokens: int = 0               # 输出token数
-    finish_reason: str = ""                  # 结束原因
+    content: str  # 回复文本
+    model: str = ""  # 使用的模型
+    prompt_tokens: int = 0  # 输入token数
+    completion_tokens: int = 0  # 输出token数
+    finish_reason: str = ""  # 结束原因
     metadata: dict = field(default_factory=dict)  # 扩展字段
-    tool_calls: list[dict] | None = None    # OpenAI格式 tool_calls（None=没调用工具）
-    reasoning_content: str = ""             # DeepSeek等thinking模型的推理内容
+    tool_calls: list[dict] | None = None  # OpenAI格式 tool_calls（None=没调用工具）
+    reasoning_content: str = ""  # DeepSeek等thinking模型的推理内容
 
     @property
     def total_tokens(self) -> int:

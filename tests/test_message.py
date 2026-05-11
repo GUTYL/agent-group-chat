@@ -4,7 +4,9 @@ from agc.core.message import Message, MessageType
 
 
 def test_message_creation():
-    msg = Message(sender="alice", content="Hello @bob", mentions=["bob"], msg_type=MessageType.mention)
+    msg = Message(
+        sender="alice", content="Hello @bob", mentions=["bob"], msg_type=MessageType.mention
+    )
     assert msg.sender == "alice"
     assert msg.content == "Hello @bob"
     assert msg.mentions == ["bob"]
@@ -13,7 +15,9 @@ def test_message_creation():
 
 
 def test_message_format_display():
-    msg = Message(sender="alice", content="Hello @bob", mentions=["bob"], msg_type=MessageType.mention)
+    msg = Message(
+        sender="alice", content="Hello @bob", mentions=["bob"], msg_type=MessageType.mention
+    )
     display = msg.format_display()
     assert "alice" in display
     assert "Hello @bob" in display
@@ -40,14 +44,16 @@ def test_tool_call_message():
         content="",
         msg_type=MessageType.tool_call,
         round_idx=2,
-        tool_calls=[{
-            "id": "call_abc123",
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "arguments": '{"query": "限流算法"}',
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "arguments": '{"query": "限流算法"}',
+                },
+            }
+        ],
     )
     assert msg.msg_type == MessageType.tool_call
     assert len(msg.tool_calls) == 1
@@ -84,11 +90,13 @@ def test_tool_call_format_display():
         sender="researcher",
         content="",
         msg_type=MessageType.tool_call,
-        tool_calls=[{
-            "id": "call_abc",
-            "type": "function",
-            "function": {"name": "web_search", "arguments": '{"query": "test"}'},
-        }],
+        tool_calls=[
+            {
+                "id": "call_abc",
+                "type": "function",
+                "function": {"name": "web_search", "arguments": '{"query": "test"}'},
+            }
+        ],
     )
     display = msg.format_display()
     assert "web_search" in display

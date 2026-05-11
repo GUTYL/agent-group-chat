@@ -1,7 +1,5 @@
 """单元测试 — 搜索工具"""
 
-import json
-
 from agc.tools.base import ToolResult, execute_tool_call, get_tool, list_tools, register_tool
 from agc.tools.search import DuckDuckGoSearchTool, create_search_tool
 

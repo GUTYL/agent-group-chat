@@ -2,8 +2,8 @@
 
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
-from agc.schedulers.round_robin import RoundRobinScheduler
 from agc.schedulers.hybrid import HybridScheduler
+from agc.schedulers.round_robin import RoundRobinScheduler
 
 
 def _make_agents():
@@ -66,15 +66,24 @@ def test_hybrid_fallback_to_round_robin():
 
 def _make_two_agents():
     return [
-        AgentConfig(name="researcher", role="研究员", goal="研究", backstory="研究员", model="gpt-4o"),
-        AgentConfig(name="architect", role="架构师", goal="设计", backstory="架构师", model="gpt-4o"),
+        AgentConfig(
+            name="researcher", role="研究员", goal="研究", backstory="研究员", model="gpt-4o"
+        ),
+        AgentConfig(
+            name="architect", role="架构师", goal="设计", backstory="架构师", model="gpt-4o"
+        ),
     ]
 
 
 def test_plan_responses_with_mention():
     agents = _make_two_agents()
     scheduler = HybridScheduler(agents)
-    msg = Message(sender="human", content="@architect 请设计一下", msg_type=MessageType.human_input, mentions=["architect"])
+    msg = Message(
+        sender="human",
+        content="@architect 请设计一下",
+        msg_type=MessageType.human_input,
+        mentions=["architect"],
+    )
     history = [msg]
     result = scheduler.plan_responses(history)
     assert len(result) == 1
@@ -84,7 +93,12 @@ def test_plan_responses_with_mention():
 def test_plan_responses_with_multiple_mentions():
     agents = _make_two_agents()
     scheduler = HybridScheduler(agents)
-    msg = Message(sender="human", content="@researcher @architect 大家看看", msg_type=MessageType.human_input, mentions=["researcher", "architect"])
+    msg = Message(
+        sender="human",
+        content="@researcher @architect 大家看看",
+        msg_type=MessageType.human_input,
+        mentions=["researcher", "architect"],
+    )
     history = [msg]
     result = scheduler.plan_responses(history)
     assert len(result) == 2

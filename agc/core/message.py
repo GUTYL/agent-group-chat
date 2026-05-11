@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import time
 import uuid
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     chat = "chat"
     mention = "mention"
     broadcast = "broadcast"
@@ -41,7 +41,7 @@ class Message(BaseModel):
         return self.model_dump(mode="python")
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "Message":
+    def from_json(cls, data: dict[str, Any]) -> Message:
         return cls.model_validate(data)
 
     @property
@@ -56,9 +56,7 @@ class Message(BaseModel):
         if self.msg_type == MessageType.tool_result:
             return f"[工具结果]: {self.content[:300]}"
         if self.msg_type == MessageType.tool_call:
-            calls = ", ".join(
-                tc.get("function", {}).get("name", "?") for tc in self.tool_calls
-            )
+            calls = ", ".join(tc.get("function", {}).get("name", "?") for tc in self.tool_calls)
             return f"[{self.sender} 调用工具]: {calls}"
         if self.msg_type == MessageType.human_input:
             return f"👤 [{self.sender}]: {self.content}"

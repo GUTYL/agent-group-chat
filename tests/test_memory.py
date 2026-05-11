@@ -1,14 +1,16 @@
 """单元测试 — 记忆工具"""
 
-import os
 import tempfile
 
 from agc.core.workspace import WorkspaceManager
+from agc.tools.base import execute_tool_call, get_tool
 from agc.tools.memory import (
-    SaveMemoryTool, RecallMemoryTool, ListMemoriesTool, DeleteMemoryTool,
+    DeleteMemoryTool,
+    ListMemoriesTool,
+    RecallMemoryTool,
+    SaveMemoryTool,
     register_memory_tools,
 )
-from agc.tools.base import execute_tool_call, get_tool
 
 
 def _make_mgr():
@@ -23,7 +25,9 @@ def test_save_and_recall():
     recall = RecallMemoryTool(mgr)
 
     # 保存
-    result = save.execute(key="限流方案", value="令牌桶适合突发流量", tags="架构,限流", _owner="researcher")
+    result = save.execute(
+        key="限流方案", value="令牌桶适合突发流量", tags="架构,限流", _owner="researcher"
+    )
     assert result.success
     assert "已保存" in result.content
 
@@ -158,15 +162,23 @@ def test_execute_tool_call_memory():
     mgr = _make_mgr()
     register_memory_tools(mgr)
 
-    result = execute_tool_call("save_memory", {
-        "key": "测试key",
-        "value": "测试value",
-        "tags": "test",
-    }, owner="researcher")
+    result = execute_tool_call(
+        "save_memory",
+        {
+            "key": "测试key",
+            "value": "测试value",
+            "tags": "test",
+        },
+        owner="researcher",
+    )
     assert result.success
 
-    result = execute_tool_call("recall_memory", {
-        "query": "测试",
-    }, owner="researcher")
+    result = execute_tool_call(
+        "recall_memory",
+        {
+            "query": "测试",
+        },
+        owner="researcher",
+    )
     assert result.success
     assert "测试value" in result.content

@@ -6,7 +6,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +16,8 @@ class ToolResult:
     """工具执行结果"""
 
     success: bool
-    content: str                    # 结果文本（会注入到对话中）
-    raw: Any = None                 # 原始数据
+    content: str  # 结果文本（会注入到对话中）
+    raw: Any = None  # 原始数据
     metadata: dict = field(default_factory=dict)
 
 

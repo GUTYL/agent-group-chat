@@ -1,4 +1,3 @@
-import json
 import tempfile
 from pathlib import Path
 
@@ -39,8 +38,8 @@ def test_append_and_load():
 def test_list_sessions():
     with tempfile.TemporaryDirectory() as tmp:
         store = SessionStore(base_dir=Path(tmp))
-        id1 = store.create_session()
-        id2 = store.create_session()
+        store.create_session()
+        store.create_session()
         sessions = store.list_sessions()
         assert len(sessions) == 2
 

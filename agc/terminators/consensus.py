@@ -9,15 +9,34 @@ from .base import TerminatorBase
 
 # 共识信号词（中文 + 英文）
 CONSENSUS_SIGNALS = [
-    "共识", "同意", "赞同", "一致", "认可", "没有异议",
-    "总结一下", "综上所述", "结论是", "最终方案",
-    "agree", "consensus", "settled", "conclude",
+    "共识",
+    "同意",
+    "赞同",
+    "一致",
+    "认可",
+    "没有异议",
+    "总结一下",
+    "综上所述",
+    "结论是",
+    "最终方案",
+    "agree",
+    "consensus",
+    "settled",
+    "conclude",
 ]
 
 # 明确反对信号（有这些说明还没共识）
 DISSENT_SIGNALS = [
-    "反对", "不同意", "质疑", "但是", "不过", "然而",
-    "disagree", "but", "however", "oppose",
+    "反对",
+    "不同意",
+    "质疑",
+    "但是",
+    "不过",
+    "然而",
+    "disagree",
+    "but",
+    "however",
+    "oppose",
 ]
 
 
@@ -65,14 +84,15 @@ class ConsensusTerminator(TerminatorBase):
         if consensus_count == 0:
             return False, ""
 
-        if dissent_count == 0:
-            # 没有反对 + 有共识信号 → 达成共识
-            if consensus_count >= n_agents:
-                return True, f"所有参与者都表达了共识（{consensus_count}个共识信号，0个反对）"
+        if dissent_count == 0 and consensus_count >= n_agents:
+            return True, f"所有参与者都表达了共识（{consensus_count}个共识信号，0个反对）"
 
         # 共识/反对 比例判断
         ratio = consensus_count / max(dissent_count, 1)
         if ratio >= self.threshold and consensus_count >= n_agents:
-            return True, f"共识信号({consensus_count})远多于反对信号({dissent_count})，比例={ratio:.1f}"
+            return (
+                True,
+                f"共识信号({consensus_count})远多于反对信号({dissent_count})，比例={ratio:.1f}",
+            )
 
         return False, ""

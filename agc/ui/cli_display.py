@@ -2,26 +2,37 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.theme import Theme
-from typing import Any
 
-from agc.core.message import Message, MessageType
 from agc.core.human_in_loop import HumanMode
+from agc.core.message import Message, MessageType
 from agc.ui.base import DisplayBase
 
 AGENT_COLORS = [
-    "cyan", "green", "yellow", "magenta", "blue",
-    "red", "bright_cyan", "bright_green", "bright_yellow", "bright_magenta",
+    "cyan",
+    "green",
+    "yellow",
+    "magenta",
+    "blue",
+    "red",
+    "bright_cyan",
+    "bright_green",
+    "bright_yellow",
+    "bright_magenta",
 ]
 
-AGC_THEME = Theme({
-    "system": "dim italic",
-    "summary": "bold green",
-    "human": "bold white on blue",
-})
+AGC_THEME = Theme(
+    {
+        "system": "dim italic",
+        "summary": "bold green",
+        "human": "bold white on blue",
+    }
+)
 
 
 class CliDisplay(DisplayBase):
@@ -69,8 +80,16 @@ class CliDisplay(DisplayBase):
         title = self._header(agent_name, agent_role, agent_model, color)
         self.console.print()
         self._live = Live(
-            Panel("[dim]⏳ 思考中...[/dim]", title=title, title_align="left", border_style=color, padding=(0, 1)),
-            console=self.console, refresh_per_second=10, transient=False,
+            Panel(
+                "[dim]⏳ 思考中...[/dim]",
+                title=title,
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            ),
+            console=self.console,
+            refresh_per_second=10,
+            transient=False,
         )
         self._live.start()
 
@@ -87,8 +106,16 @@ class CliDisplay(DisplayBase):
         meta = self._agent_meta.get(self._stream_name, {})
         title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
         self._live = Live(
-            Panel(self._stream_buf, title=title, title_align="left", border_style=color, padding=(0, 1)),
-            console=self.console, refresh_per_second=10, transient=False,
+            Panel(
+                self._stream_buf,
+                title=title,
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            ),
+            console=self.console,
+            refresh_per_second=10,
+            transient=False,
         )
         self._live.start()
 
@@ -99,10 +126,15 @@ class CliDisplay(DisplayBase):
         meta = self._agent_meta.get(self._stream_name, {})
         title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
         content = self._stream_buf if self._stream_buf else "[dim]⏳ 思考中...[/dim]"
-        self._live.update(Panel(
-            content, title=title, title_align="left",
-            border_style=color, padding=(0, 1),
-        ))
+        self._live.update(
+            Panel(
+                content,
+                title=title,
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            )
+        )
 
     def _stop_live(self) -> None:
         if self._live:
@@ -147,9 +179,7 @@ class CliDisplay(DisplayBase):
             model = getattr(a, "model", "")
             self._agent_meta[a.name] = {"role": a.role, "model": model}
             model_str = f" [dim]({model})[/dim]" if model else ""
-            agent_lines.append(
-                f"  [{color}]@{a.name}[/{color}] [dim]· {a.role}{model_str}[/dim]"
-            )
+            agent_lines.append(f"  [{color}]@{a.name}[/{color}] [dim]· {a.role}{model_str}[/dim]")
 
         if human_loop and human_loop.mode != HumanMode.off:
             agent_lines.append(
@@ -157,10 +187,13 @@ class CliDisplay(DisplayBase):
             )
 
         agents_text = "\n".join(agent_lines)
-        self.console.print(Panel(
-            f"[bold]话题:[/bold] {topic}\n\n[bold]参与者:[/bold]\n{agents_text}",
-            title="群聊开始", border_style="bright_blue",
-        ))
+        self.console.print(
+            Panel(
+                f"[bold]话题:[/bold] {topic}\n\n[bold]参与者:[/bold]\n{agents_text}",
+                title="群聊开始",
+                border_style="bright_blue",
+            )
+        )
         self.console.print()
 
     def print_result(self, result: Any) -> None:
@@ -173,38 +206,6 @@ class CliDisplay(DisplayBase):
         )
         self.console.print(f"[dim]{stats}[/dim]")
 
-    # ── FreeChat display ───────────────────────────────────
-
-    def print_freechat_header(self, user_name: str, agents: list[Any]) -> None:
-        agent_lines = []
-        for a in agents:
-            color = self._get_color(a.name)
-            self._agent_meta[a.name] = {"role": a.role, "model": getattr(a, "model", "")}
-            model = getattr(a, "model", "")
-            model_str = f" [dim]({model})[/dim]" if model else ""
-            agent_lines.append(
-                f"  [{color}]@{a.name}[/{color}] [dim]· {a.role}{model_str}[/dim]"
-            )
-        agents_text = "\n".join(agent_lines)
-        self.console.print(Panel(
-            f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
-            title="自由群聊",
-            border_style="bright_blue",
-        ))
-        self.console.print()
-
-    def print_freechat_input(self, sender: str, content: str) -> None:
-        color = self._get_color(sender)
-        title = f"[bold {color}]{sender}[/bold {color}] [dim]用户[/dim]"
-        self.console.print(Panel(
-            content, title=title, title_align="left",
-            border_style=color, padding=(0, 1),
-        ))
-
-    def print_topic_change(self, topic: str) -> None:
-        self.console.print()
-        self.console.print(f"[system]── 话题已切换为: {topic} ──[/system]")
-
     # ── Message renderers ──────────────────────────────────
 
     def _print_chat(self, msg: Message) -> None:
@@ -216,10 +217,15 @@ class CliDisplay(DisplayBase):
         title = self._header(msg.sender, meta.get("role", ""), meta.get("model", ""), color)
 
         self.console.print()
-        self.console.print(Panel(
-            msg.content, title=title, title_align="left",
-            border_style=color, padding=(0, 1),
-        ))
+        self.console.print(
+            Panel(
+                msg.content,
+                title=title,
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            )
+        )
 
     def _print_system(self, msg: Message) -> None:
         self.console.print()
@@ -229,7 +235,12 @@ class CliDisplay(DisplayBase):
         color = self._get_color(msg.sender)
         title = f"[bold {color}]{msg.sender}[/bold {color}] [dim]用户[/dim]"
         self.console.print()
-        self.console.print(Panel(
-            msg.content, title=title, title_align="left",
-            border_style=color, padding=(0, 1),
-        ))
+        self.console.print(
+            Panel(
+                msg.content,
+                title=title,
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            )
+        )

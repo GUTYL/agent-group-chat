@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
 from agc.llm.base import LLMBase
 
 from .base import SchedulerBase
-
 
 # 角色关键词映射（零成本路由）
 ROLE_KEYWORDS: dict[str, list[str]] = {
@@ -138,7 +135,7 @@ class HybridScheduler(SchedulerBase):
 
         prompt = f"""基于对话选择最合适的发言人。只回复一个名字，不要解释。
 
-可选的发言人: {', '.join(agent_names)}
+可选的发言人: {", ".join(agent_names)}
 
 最近消息:
 {recent_text}"""

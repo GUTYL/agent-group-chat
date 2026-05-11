@@ -12,8 +12,12 @@ from agc.llm.base import LLMBase
 logger = logging.getLogger(__name__)
 
 VISIBLE_MESSAGE_TYPES = (
-    MessageType.chat, MessageType.mention, MessageType.system,
-    MessageType.summary, MessageType.tool_call, MessageType.tool_result,
+    MessageType.chat,
+    MessageType.mention,
+    MessageType.system,
+    MessageType.summary,
+    MessageType.tool_call,
+    MessageType.tool_result,
     MessageType.human_input,
 )
 
@@ -41,19 +45,26 @@ class ContextManager:
         system_prompt: str | None = None,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt or agent.build_system_prompt(topic, all_agents)},
+            {
+                "role": "system",
+                "content": system_prompt or agent.build_system_prompt(topic, all_agents),
+            },
         ]
 
         selected = self._select_history(history)
         if selected["summary"]:
-            messages.append({"role": "system", "content": f"[之前的讨论摘要]\n{selected['summary']}"})
+            messages.append(
+                {"role": "system", "content": f"[之前的讨论摘要]\n{selected['summary']}"}
+            )
         for msg in selected["recent"]:
             messages.append(msg.to_openai_msg())
 
-        messages.append({
-            "role": "user",
-            "content": f"[{agent.name}] 现在轮到你发言，请基于你的角色视角 contribute to the discussion。如果有想@的人请用 @名字 格式。",
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": f"[{agent.name}] 现在轮到你发言，请基于你的角色视角 contribute to the discussion。如果有想@的人请用 @名字 格式。",
+            }
+        )
         return messages
 
     def build_freechat_context(
@@ -71,10 +82,12 @@ class ContextManager:
         ]
 
         if current_topic:
-            messages.append({
-                "role": "system",
-                "content": f"[当前话题: {current_topic}]",
-            })
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"[当前话题: {current_topic}]",
+                }
+            )
 
         filtered = [m for m in history if m.msg_type in VISIBLE_MESSAGE_TYPES]
         start = max(0, len(filtered) - recent_window)
@@ -84,10 +97,12 @@ class ContextManager:
         for msg in recent:
             messages.append(msg.to_openai_msg())
 
-        messages.append({
-            "role": "user",
-            "content": f"[{agent.name}] 有人发了一条消息，根据需要简洁回应。如果跟你无关可以不用回复。@名字 来指定对话对象。",
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": f"[{agent.name}] 有人发了一条消息，根据需要简洁回应。如果跟你无关可以不用回复。@名字 来指定对话对象。",
+            }
+        )
         return messages
 
     def _select_history(self, history: list[Message]) -> dict[str, Any]:
@@ -136,13 +151,15 @@ class ContextManager:
         try:
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=SUMMARY_TEMPERATURE, max_tokens=SUMMARY_COMPRESSION_TOKENS,
+                temperature=SUMMARY_TEMPERATURE,
+                max_tokens=SUMMARY_COMPRESSION_TOKENS,
             )
-            logger.info(f"上下文压缩: {len(messages)}条消息 -> {response.completion_tokens} tokens摘要")
+            logger.info(
+                f"上下文压缩: {len(messages)}条消息 -> {response.completion_tokens} tokens摘要"
+            )
             return response.content
         except Exception as e:
             logger.warning(f"摘要生成失败: {e}, 回退到简单拼接")
             return "\n".join(
-                f"[{m.sender}]: {m.content[:FALLBACK_MSG_TRUNCATION]}..."
-                for m in messages
+                f"[{m.sender}]: {m.content[:FALLBACK_MSG_TRUNCATION]}..." for m in messages
             )

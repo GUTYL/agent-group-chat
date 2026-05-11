@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import tiktoken
 from openai import OpenAI
@@ -80,7 +81,9 @@ class OpenAIClient(LLMBase):
             reasoning_content=getattr(message, "reasoning_content", "") or "",
         )
 
-    def _streamed_chat(self, kwargs: dict[str, Any], on_chunk: Callable[[str], None]) -> LLMResponse:
+    def _streamed_chat(
+        self, kwargs: dict[str, Any], on_chunk: Callable[[str], None]
+    ) -> LLMResponse:
         kwargs["stream"] = True
         stream = self.client.chat.completions.create(**kwargs)
 
@@ -115,7 +118,9 @@ class OpenAIClient(LLMBase):
             if getattr(delta, "tool_calls", None):
                 self._accumulate_tool_calls(delta.tool_calls, tool_calls_by_idx)
 
-        tc_list = [tool_calls_by_idx[k] for k in sorted(tool_calls_by_idx)] if tool_calls_by_idx else None
+        tc_list = (
+            [tool_calls_by_idx[k] for k in sorted(tool_calls_by_idx)] if tool_calls_by_idx else None
+        )
 
         return LLMResponse(
             content="".join(content_parts),
@@ -136,7 +141,8 @@ class OpenAIClient(LLMBase):
             return None
         return [
             {
-                "id": tc.id, "type": "function",
+                "id": tc.id,
+                "type": "function",
                 "function": {"name": tc.function.name, "arguments": tc.function.arguments},
             }
             for tc in tcs
@@ -147,7 +153,11 @@ class OpenAIClient(LLMBase):
         for tc in delta_tcs:
             idx = tc.index
             if idx not in acc:
-                acc[idx] = {"id": tc.id or "", "type": "function", "function": {"name": "", "arguments": ""}}
+                acc[idx] = {
+                    "id": tc.id or "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
             if tc.id:
                 acc[idx]["id"] = tc.id
             if tc.function:

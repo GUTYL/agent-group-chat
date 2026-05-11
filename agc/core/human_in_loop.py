@@ -11,7 +11,7 @@ Agent 可以看到人类的发言并回复。
 from __future__ import annotations
 
 import logging
-from enum import Enum
+from enum import StrEnum
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -21,10 +21,11 @@ from agc.core.message import Message, MessageType
 logger = logging.getLogger(__name__)
 
 
-class HumanMode(str, Enum):
+class HumanMode(StrEnum):
     """人类介入模式"""
-    off = "off"              # 不介入
-    always = "always"        # 每轮都暂停等人类输入
+
+    off = "off"  # 不介入
+    always = "always"  # 每轮都暂停等人类输入
     on_demand = "on_demand"  # 人类随时可介入，但默认继续
 
 
@@ -50,12 +51,7 @@ class HumanInTheLoop:
 
     def should_pause(self, round_idx: int) -> bool:
         """判断当前轮次是否需要暂停等人类输入"""
-        if self.mode == HumanMode.off:
-            return False
-        if self.mode == HumanMode.always:
-            return True
-        # on_demand: 不主动暂停，人类自行触发
-        return False
+        return self.mode == HumanMode.always
 
     def get_input(self, round_idx: int, last_speaker: str = "") -> Message | None:
         """获取人类输入，返回 Message 或 None（跳过）
@@ -98,13 +94,13 @@ class HumanInTheLoop:
 
         if user_input.lower() == "stop":
             self._console.print("[bold red]人类要求结束讨论[/bold red]")
-            return self._make_message("我要求结束本次讨论，请大家做最终总结。", round_idx, force_stop=True)
+            return self._make_message(
+                "我要求结束本次讨论，请大家做最终总结。", round_idx, force_stop=True
+            )
 
         return self._make_message(user_input, round_idx)
 
-    def _make_message(
-        self, content: str, round_idx: int, force_stop: bool = False
-    ) -> Message:
+    def _make_message(self, content: str, round_idx: int, force_stop: bool = False) -> Message:
         """构建人类输入消息"""
         return Message(
             sender=self.name,
@@ -115,7 +111,7 @@ class HumanInTheLoop:
         )
 
     @staticmethod
-    def create(mode_str: str, name: str = "human", callback=None) -> "HumanInTheLoop":
+    def create(mode_str: str, name: str = "human", callback=None) -> HumanInTheLoop:
         """工厂方法：从字符串创建 HumanInTheLoop"""
         mode_map = {
             "off": HumanMode.off,

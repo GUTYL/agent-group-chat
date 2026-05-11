@@ -7,23 +7,37 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from pydantic import BaseModel
+
 from agc.core.agent import AgentConfig
 from agc.core.human_in_loop import HumanInTheLoop
 from agc.core.message import Message, MessageType
-from agc.core.room import RoomConfig
-from agc.core.session import ChatSession
+from agc.core.session import MAX_TOOL_ROUNDS, ChatSession
 from agc.terminators.composite import CompositeTerminator
 from agc.terminators.consensus import ConsensusTerminator
 from agc.terminators.max_rounds import MaxRoundsTerminator
-from agc.tools.base import execute_tool_call
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 8
-MAX_TOOL_RESULT_LENGTH = 2000
 SUMMARY_TEMPERATURE = 0.3
 SUMMARY_MAX_TOKENS = 800
 SUMMARY_RECENT_MSGS = 20
+
+
+class RoomConfig(BaseModel):
+    """群聊房间配置"""
+
+    name: str
+    agents: list[AgentConfig]
+    scheduler: str = "hybrid"
+    max_rounds: int = 20
+    terminator: str = "consensus"
+    human_in_loop: bool = False
+    context_window: int = 8000
+    summary_on_overflow: bool = True
+    verbose: bool = True
+    base_url: str | None = None
+    api_key: str | None = None
 
 
 @dataclass
@@ -56,21 +70,35 @@ class TopicSession(ChatSession):
         stream: bool = True,
     ):
         from agc.llm.base import LLMBase
+
         super().__init__(
-            agents=agents, llm=llm if isinstance(llm, LLMBase) else None,
-            context_window=context_window, base_url=base_url, api_key=api_key,
-            stream=stream, workspace_root=workspace_root, tools=tools, scheduler=scheduler,
+            agents=agents,
+            llm=llm if isinstance(llm, LLMBase) else None,
+            context_window=context_window,
+            base_url=base_url,
+            api_key=api_key,
+            stream=stream,
+            workspace_root=workspace_root,
+            tools=tools,
+            scheduler=scheduler,
         )
         self.config = RoomConfig(
-            name=name, agents=agents, scheduler=scheduler,
-            max_rounds=max_rounds, context_window=context_window,
-            verbose=verbose, base_url=base_url, api_key=api_key,
+            name=name,
+            agents=agents,
+            scheduler=scheduler,
+            max_rounds=max_rounds,
+            context_window=context_window,
+            verbose=verbose,
+            base_url=base_url,
+            api_key=api_key,
         )
         self._human = human
-        self._terminator = CompositeTerminator([
-            ConsensusTerminator(window=3, threshold=2.0),
-            MaxRoundsTerminator(max_rounds=max_rounds),
-        ])
+        self._terminator = CompositeTerminator(
+            [
+                ConsensusTerminator(window=3, threshold=2.0),
+                MaxRoundsTerminator(max_rounds=max_rounds),
+            ]
+        )
         self._max_rounds = max_rounds
 
     # ── Main loop ──────────────────────────────────────────
@@ -111,8 +139,11 @@ class TopicSession(ChatSession):
 
         summary = self._generate_summary(topic)
         return ChatResult(
-            topic=topic, messages=self.history, summary=summary,
-            total_tokens=total_tokens, rounds=round_idx,
+            topic=topic,
+            messages=self.history,
+            summary=summary,
+            total_tokens=total_tokens,
+            rounds=round_idx,
             stop_reason=self.history[-1].content if self.history else "",
         )
 
@@ -127,7 +158,8 @@ class TopicSession(ChatSession):
         time_hint = f"\n\n当前时间: {now}"
         for agent in self.config.agents:
             self._system_prompts[agent.name] = agent.build_system_prompt(
-                topic, self.config.agents,
+                topic,
+                self.config.agents,
                 extra=extra_prompts.get(agent.name, "") + time_hint,
             )
 
@@ -135,9 +167,7 @@ class TopicSession(ChatSession):
         """返回 True 表示需要跳过该发言人（未耗尽则 False）"""
         if speaker.max_turns <= 0:
             return False
-        if self._turn_counts[speaker.name] < speaker.max_turns:
-            return False
-        return True
+        return self._turn_counts[speaker.name] >= speaker.max_turns
 
     def _all_exhausted(self) -> bool:
         return all(
@@ -194,7 +224,9 @@ class TopicSession(ChatSession):
         for _ in range(MAX_TOOL_ROUNDS + 1):
             ctx = self._build_context(agent, topic, result_messages)
             response = llm.chat(
-                messages=ctx, model=agent.model, temperature=agent.temperature,
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
                 tools=agent_tools or None,
                 on_chunk=self._emit_chunk if self._stream else None,
             )
@@ -212,71 +244,52 @@ class TopicSession(ChatSession):
 
         return result_messages, total_tokens
 
-    def _current_round(self) -> int:
-        return len(self.history) // max(len(self.config.agents), 1)
-
-    def _build_context(self, agent: AgentConfig, topic: str, result_messages: list[Message]) -> list[dict[str, any]]:
+    def _build_context(
+        self, agent: AgentConfig, topic: str, result_messages: list[Message]
+    ) -> list[dict[str, any]]:
         ctx = self._context.build_messages(
-            agent, topic, self.history, self.config.agents,
+            agent,
+            topic,
+            self.history,
+            self.config.agents,
             system_prompt=self._system_prompts.get(agent.name),
         )
         for rm in result_messages:
             ctx.append(rm.to_openai_msg())
         return ctx
 
-    def _execute_tool_calls(self, agent: AgentConfig, response, result_messages: list[Message], round_idx: int) -> None:
-        assistant_msg = Message(
-            sender=agent.name, content=response.content or "",
-            msg_type=MessageType.tool_call, round_idx=round_idx,
-            tool_calls=response.tool_calls,
-            reasoning_content=response.reasoning_content,
-            metadata={"tokens": response.total_tokens, "model": response.model, "_emitted": True},
-        )
-        result_messages.append(assistant_msg)
-        for cb in self._on_message_callbacks:
-            cb(assistant_msg)
+    def _execute_tool_calls(
+        self, agent: AgentConfig, response, result_messages: list[Message], round_idx: int
+    ) -> None:
+        msgs = self._create_tool_messages(agent, response, round_idx)
+        result_messages.extend(msgs)
+        for msg in msgs:
+            self._notify_display(msg)
 
-        for tc in response.tool_calls:
-            func_name = tc["function"]["name"]
-            func_args = tc["function"]["arguments"]
-            tool_result = execute_tool_call(func_name, func_args, owner=agent.name)
-            tool_msg = Message(
-                sender="tool", content=tool_result.content[:MAX_TOOL_RESULT_LENGTH],
-                msg_type=MessageType.tool_result, round_idx=round_idx,
-                tool_call_id=tc["id"],
-                metadata={"tool_name": func_name, "tool_success": tool_result.success, "_emitted": True},
-            )
-            result_messages.append(tool_msg)
-            for cb in self._on_message_callbacks:
-                cb(tool_msg)
-
-    def _force_text_response(self, agent: AgentConfig, topic: str, llm, result_messages: list[Message], round_idx: int, total_tokens: int) -> None:
+    def _force_text_response(
+        self,
+        agent: AgentConfig,
+        topic: str,
+        llm,
+        result_messages: list[Message],
+        round_idx: int,
+        total_tokens: int,
+    ) -> None:
         try:
             ctx = self._build_context(agent, topic, result_messages)
             response = llm.chat(
-                messages=ctx, model=agent.model, temperature=agent.temperature,
-                tools=None, on_chunk=self._emit_chunk if self._stream else None,
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
+                tools=None,
+                on_chunk=self._emit_chunk if self._stream else None,
             )
             result_messages.append(self._create_final_message(agent, response, round_idx))
         except Exception as e:
             logger.warning(f"强制无工具回复失败: {e}")
 
-    def _create_final_message(self, agent: AgentConfig, response, round_idx: int) -> Message:
-        content = response.content.strip()
-        mentions = self._parse_mentions(content)
-        return Message(
-            sender=agent.name, content=content,
-            msg_type=MessageType.mention if mentions else MessageType.chat,
-            mentions=mentions, round_idx=round_idx,
-            reasoning_content=response.reasoning_content,
-            metadata={
-                "tokens": response.total_tokens, "model": response.model,
-                "finish_reason": response.finish_reason,
-            },
-        )
-
     def _parse_mentions(self, content: str) -> list[str]:
-        agent_names = {a.name for a in self.config.agents}
+        agent_names = {a.name for a in self.agents}
         if self._human:
             agent_names.add(self._human.name)
         return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
@@ -284,9 +297,7 @@ class TopicSession(ChatSession):
     # ── Summary ────────────────────────────────────────────
 
     def _generate_summary(self, topic: str) -> str:
-        conversation = "\n".join(
-            m.format_display() for m in self.history[-SUMMARY_RECENT_MSGS:]
-        )
+        conversation = "\n".join(m.format_display() for m in self.history[-SUMMARY_RECENT_MSGS:])
         ws_info = ""
         if self._workspace_mgr:
             ws_info = f"\n\n各Agent工作空间:\n{self._workspace_mgr.get_all_summaries()}"
@@ -309,7 +320,8 @@ class TopicSession(ChatSession):
         try:
             response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=SUMMARY_TEMPERATURE, max_tokens=SUMMARY_MAX_TOKENS,
+                temperature=SUMMARY_TEMPERATURE,
+                max_tokens=SUMMARY_MAX_TOKENS,
             )
             return response.content
         except Exception as e:

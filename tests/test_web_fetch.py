@@ -1,12 +1,14 @@
 """单元测试 — 网页抓取工具"""
 
-import json
-
-from agc.tools.web_fetch import (
-    WebFetchTool, _strip_tags, _normalize, _validate_url,
-    _html_to_markdown, register_web_fetch_tool,
-)
 from agc.tools.base import get_tool
+from agc.tools.web_fetch import (
+    WebFetchTool,
+    _html_to_markdown,
+    _normalize,
+    _strip_tags,
+    _validate_url,
+    register_web_fetch_tool,
+)
 
 
 def test_validate_url():

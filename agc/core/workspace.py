@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,7 @@ class Workspace:
         """列出工作空间中的文件"""
         target = (self.path / subdir).resolve() if subdir else self.path
         if not str(target).startswith(str(self.path.resolve())):
-            return f"❌ 安全错误：不能列出工作空间外的路径"
+            return "❌ 安全错误：不能列出工作空间外的路径"
         if not target.exists():
             return f"❌ 目录不存在: {subdir or '/'}"
 

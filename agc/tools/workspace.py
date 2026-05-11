@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from .base import ToolBase, ToolResult, register_tool
 
 

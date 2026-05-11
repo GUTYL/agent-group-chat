@@ -3,12 +3,15 @@
 ## Setup & commands
 
 ```bash
-uv sync --extra dev           # install all deps (including test + prompt_toolkit)
+uv sync --extra dev           # install all deps (including test + prompt_toolkit + ruff)
 uv run pytest tests/ -v       # run all 78 tests
 uv run pytest tests/test_message.py::test_message_to_json -v  # single test
+uv run ruff check             # lint
+uv run ruff format            # auto-format
+uv run ruff check --fix       # auto-fix lint issues
 ```
 
-No linter, typechecker, or formatter configured. Deps change → `uv lock && uv sync --extra dev`.
+Ruff 配置在 `pyproject.toml` 中: E/W/F/I/B/C4/SIM/UP 规则集，行宽 100，双引号。
 
 ## Architecture
 
