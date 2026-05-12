@@ -255,6 +255,7 @@ class FreeChatSession(ChatSession):
         msgs = self._create_tool_messages(agent, response, round_idx)
         result_messages.extend(msgs)
         for msg in msgs:
+            self.history.append(msg)
             self._notify_display(msg)
 
     def _force_text_response(

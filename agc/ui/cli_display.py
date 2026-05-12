@@ -126,7 +126,7 @@ class CliDisplay(DisplayBase):
 
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
-            self._flush_reasoning()
+            self._reasoning_buf = ""
             for tc in message.tool_calls:
                 func = tc.get("function", {})
                 name = func.get("name", "?")
@@ -145,6 +145,8 @@ class CliDisplay(DisplayBase):
                 if len(args_display) > 60:
                     args_display = args_display[:57] + "..."
                 self._action_log.append(f"🔧 调用 {name}({args_display})")
+            if len(self._action_log) > 20:
+                self._action_log = self._action_log[-20:]
             self._update_live()
             return
 
@@ -157,6 +159,8 @@ class CliDisplay(DisplayBase):
             else:
                 summary = message.content[:120]
                 self._action_log.append(f"❌ {tool_name} → {summary}")
+            if len(self._action_log) > 20:
+                self._action_log = self._action_log[-20:]
             self._update_live()
             return
 

@@ -84,7 +84,7 @@ class TestActionLog:
         assert "❌" in display._action_log[0]
         assert "Connection timeout" in display._action_log[0]
 
-    def test_reasoning_flushed_on_tool_call(self, display):
+    def test_reasoning_cleared_on_tool_call(self, display):
         display.begin_stream("researcher", "研究员")
         display.on_reasoning_chunk("I need to search")
 
@@ -102,8 +102,9 @@ class TestActionLog:
         )
         display.on_message(msg)
 
+        # reasoning is cleared but NOT persisted to action_log
         assert display._reasoning_buf == ""
-        assert any("I need to search" in entry for entry in display._action_log)
+        assert not any("I need to search" in entry for entry in display._action_log)
 
     def test_reasoning_flushed_on_final_message(self, display):
         display.begin_stream("alice", "研究员")
