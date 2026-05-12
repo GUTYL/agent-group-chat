@@ -429,4 +429,10 @@ class FreeChatSession(ChatSession):
         self.history = self._session_store.load_session(session_id)
         self.session_id = session_id
         if self.history:
+            recent = self.history[-10:]
+            for msg in recent:
+                if msg.msg_type in (MessageType.tool_call, MessageType.tool_result):
+                    continue
+                for cb in self._on_message_callbacks:
+                    cb(msg)
             self._emit_system(f"已恢复会话，共 {len(self.history)} 条历史消息")
