@@ -410,14 +410,18 @@ class FreeChatSession(ChatSession):
         """用LLM生成会话名称"""
         try:
             response = self.llm.chat(
-                messages=[
-                    {"role": "user", "content": f"消息：{first_message}\n\n标题："},
-                ],
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "根据消息内容生成5-10字的会话标题。只输出标题，不要任何其他文字。\n\n"
+                        "消息：今天天气怎么样\n标题：天气查询\n\n"
+                        "消息：帮我写个Python脚本\n标题：Python编程求助\n\n"
+                        f"消息：{first_message}\n标题："
+                    ),
+                }],
                 temperature=0.0,
-                max_tokens=10,
             )
-            name = response.content or response.reasoning_content or ""
-            name = name.strip()
+            name = (response.content or response.reasoning_content or "").strip()
             name = re.sub(r'["""\n\r]', "", name)
             return name[:20]
         except Exception:
