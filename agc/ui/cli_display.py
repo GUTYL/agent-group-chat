@@ -134,6 +134,7 @@ class CliDisplay(DisplayBase):
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
             self._reasoning_buf = ""
+            self._stream_buf = ""
             for tc in message.tool_calls:
                 func = tc.get("function", {})
                 name = func.get("name", "?")
