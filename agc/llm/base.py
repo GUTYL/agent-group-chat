@@ -42,6 +42,7 @@ class LLMBase(ABC):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        on_reasoning_chunk: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """发送聊天请求，返回响应
 
@@ -52,6 +53,7 @@ class LLMBase(ABC):
             max_tokens: 最大输出token
             tools: OpenAI function calling schema 列表
             on_chunk: 流式输出回调，接收增量文本
+            on_reasoning_chunk: 推理过程流式回调（用于thinking模型）
         """
         ...
 

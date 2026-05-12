@@ -256,8 +256,15 @@ class WebFetchTool(ToolBase):
             },
         }
 
-    def _format_result(self, url: str, text: str, extractor: str, final_url: str = "",
-                       title: str = "", max_chars: int = 0) -> str:
+    def _format_result(
+        self,
+        url: str,
+        text: str,
+        extractor: str,
+        final_url: str = "",
+        title: str = "",
+        max_chars: int = 0,
+    ) -> str:
         """统一格式化抓取结果为字符串"""
         truncated = len(text) > max_chars
         if truncated:

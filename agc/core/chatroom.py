@@ -229,6 +229,7 @@ class TopicSession(ChatSession):
                 temperature=agent.temperature,
                 tools=agent_tools or None,
                 on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
             total_tokens += response.total_tokens
 
@@ -283,6 +284,7 @@ class TopicSession(ChatSession):
                 temperature=agent.temperature,
                 tools=None,
                 on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
             result_messages.append(self._create_final_message(agent, response, round_idx))
         except Exception as e:

@@ -59,20 +59,32 @@ def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
 
 
 _DEFAULT_AGENTS = [
-    {"name": "researcher", "role": "资深研究员",
-     "goal": "深入调研问题，提供信息支撑，善于发现关键细节",
-     "backstory": "你是一位严谨的研究员，擅长搜索和整理信息。你总是先搞清楚问题的全貌，再让别人介入讨论。你会用数据和事实说话，不凭直觉下结论。"},
-    {"name": "architect", "role": "系统架构师",
-     "goal": "设计方案，评估可行性和风险，做出权衡取舍",
-     "backstory": "你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。你倾向简洁可靠的方案，而不是过度设计。"},
-    {"name": "reviewer", "role": "魔鬼代言人",
-     "goal": "质疑和验证结论，防止团队思维和共识谬误",
-     "backstory": "你天生怀疑一切，不轻易认同。你总是找反例和漏洞，逼迫团队思考得更深入。你的价值在于别人都同意时你说'等等，万一呢？'"},
+    {
+        "name": "researcher",
+        "role": "资深研究员",
+        "goal": "深入调研问题，提供信息支撑，善于发现关键细节",
+        "backstory": "你是一位严谨的研究员，擅长搜索和整理信息。你总是先搞清楚问题的全貌，再让别人介入讨论。你会用数据和事实说话，不凭直觉下结论。",
+    },
+    {
+        "name": "architect",
+        "role": "系统架构师",
+        "goal": "设计方案，评估可行性和风险，做出权衡取舍",
+        "backstory": "你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。你倾向简洁可靠的方案，而不是过度设计。",
+    },
+    {
+        "name": "reviewer",
+        "role": "魔鬼代言人",
+        "goal": "质疑和验证结论，防止团队思维和共识谬误",
+        "backstory": "你天生怀疑一切，不轻易认同。你总是找反例和漏洞，逼迫团队思考得更深入。你的价值在于别人都同意时你说'等等，万一呢？'",
+    },
 ]
 
 
 def _make_default_agents(model: str, tool_names: list[str]) -> list[AgentConfig]:
-    return [AgentConfig(**a, model=model, tools=tool_names if tool_names else []) for a in _DEFAULT_AGENTS]
+    return [
+        AgentConfig(**a, model=model, tools=tool_names if tool_names else [])
+        for a in _DEFAULT_AGENTS
+    ]
 
 
 def _save_topic_session(topic: str, result) -> None:
@@ -178,6 +190,7 @@ def topic(
     room.on_message(display.on_message)
     room.on_chunk(display.on_chunk)
     room.on_speaker_start(display.begin_stream)
+    room.on_reasoning(display.on_reasoning_chunk)
     display.print_header(topic, agents, human_loop=human_loop)
     result = room.chat(topic)
     display.print_result(result)
@@ -275,6 +288,7 @@ def room(
     session.on_message(display.on_message)
     session.on_chunk(display.on_chunk)
     session.on_speaker_start(display.begin_stream)
+    session.on_reasoning(display.on_reasoning_chunk)
 
     if resume and session_id:
         try:

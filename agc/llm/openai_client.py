@@ -40,10 +40,11 @@ class OpenAIClient(LLMBase):
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        on_reasoning_chunk: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         kwargs = self._build_kwargs(messages, model, temperature, max_tokens, tools)
         if on_chunk is not None:
-            return self._streamed_chat(kwargs, on_chunk)
+            return self._streamed_chat(kwargs, on_chunk, on_reasoning_chunk)
         return self._normal_chat(kwargs)
 
     def _build_kwargs(
@@ -82,7 +83,10 @@ class OpenAIClient(LLMBase):
         )
 
     def _streamed_chat(
-        self, kwargs: dict[str, Any], on_chunk: Callable[[str], None]
+        self,
+        kwargs: dict[str, Any],
+        on_chunk: Callable[[str], None],
+        on_reasoning_chunk: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         kwargs["stream"] = True
         stream = self.client.chat.completions.create(**kwargs)
@@ -109,6 +113,8 @@ class OpenAIClient(LLMBase):
             rc = getattr(delta, "reasoning_content", None)
             if rc:
                 reasoning_parts.append(rc)
+                if on_reasoning_chunk:
+                    on_reasoning_chunk(rc)
 
             text = getattr(delta, "content", None)
             if text:

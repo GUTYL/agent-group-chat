@@ -26,6 +26,10 @@ class DisplayBase(ABC):
         """接收流式文本片段"""
 
     @abstractmethod
+    def on_reasoning_chunk(self, text: str) -> None:
+        """接收推理过程流式片段（thinking 模型）"""
+
+    @abstractmethod
     def begin_stream(self, agent_name: str, agent_role: str, agent_model: str = "") -> None:
         """某 agent 开始流式输出"""
 

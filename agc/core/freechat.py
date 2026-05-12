@@ -22,7 +22,8 @@ FREECHAT_SYSTEM_PROMPT = """你是一个群聊助手。你的名字是{name}，�
 
 群聊规则：
 - 自然地回应消息，像在真正的聊天软件里一样
-- 用 @{name} 格式提到其他参与者
+- 召唤发言用 @agent名（对方会收到消息并回应）
+- 引用或总结他人观点时用纯文本 agent名（不加@），如：「architect 之前提到...」
 - 如果消息与你无关，可以不回复
 - 保持简洁，不要长篇大论
 - 可以随时参与讨论，不需要等待轮流
@@ -215,6 +216,7 @@ class FreeChatSession(ChatSession):
                 temperature=agent.temperature,
                 tools=agent_tools or None,
                 on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
             total_tokens += response.total_tokens
 
@@ -253,7 +255,7 @@ class FreeChatSession(ChatSession):
         msgs = self._create_tool_messages(agent, response, round_idx)
         result_messages.extend(msgs)
         for msg in msgs:
-            self._emit_message(msg)
+            self._notify_display(msg)
 
     def _force_text_response(
         self,
@@ -270,6 +272,7 @@ class FreeChatSession(ChatSession):
                 temperature=agent.temperature,
                 tools=None,
                 on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
             final_msg = self._create_final_message(agent, response, self._current_round())
             self._emit_message(final_msg)

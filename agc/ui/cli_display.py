@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from rich.console import Console
@@ -18,15 +19,25 @@ from agc.core.message import Message, MessageType
 from agc.ui.base import DisplayBase
 
 AGENT_COLORS = [
-    "cyan", "green", "yellow", "magenta", "blue",
-    "red", "bright_cyan", "bright_green", "bright_yellow", "bright_magenta",
+    "cyan",
+    "green",
+    "yellow",
+    "magenta",
+    "blue",
+    "red",
+    "bright_cyan",
+    "bright_green",
+    "bright_yellow",
+    "bright_magenta",
 ]
 
-AGC_THEME = Theme({
-    "system": "dim italic",
-    "summary": "bold green",
-    "human": "bold white on blue",
-})
+AGC_THEME = Theme(
+    {
+        "system": "dim italic",
+        "summary": "bold green",
+        "human": "bold white on blue",
+    }
+)
 
 
 class CliDisplay(DisplayBase):
@@ -40,7 +51,8 @@ class CliDisplay(DisplayBase):
         self._streaming = False
         self._stream_name = ""
         self._stream_buf = ""
-        self._tool_status = ""
+        self._reasoning_buf = ""
+        self._action_log: list[str] = []
         self._live: Live | None = None
 
     def _get_color(self, name: str) -> str:
@@ -60,10 +72,15 @@ class CliDisplay(DisplayBase):
         meta = self._agent_meta.get(self._stream_name, {})
         title = self._header(self._stream_name, meta.get("role", ""), meta.get("model", ""), color)
 
-        content = self._stream_buf if self._stream_buf else "[dim]⏳ 思考中...[/dim]"
-        if self._tool_status:
-            content += f"\n\n[dim]🔧 {self._tool_status}[/dim]"
+        parts: list[str] = []
+        if self._action_log:
+            parts.append("\n".join(f"[dim]{a}[/dim]" for a in self._action_log))
+        if self._reasoning_buf:
+            parts.append(f"[dim]💭 思考: {self._reasoning_buf}[/dim]")
+        if self._stream_buf:
+            parts.append(self._stream_buf)
 
+        content = "\n\n".join(parts) if parts else "[dim]⏳ 思考中...[/dim]"
         return Panel(content, title=title, title_align="left", border_style=color, padding=(0, 1))
 
     def _update_live(self) -> None:
@@ -75,14 +92,22 @@ class CliDisplay(DisplayBase):
             self._live.stop()
             self._live = None
 
+    def _flush_reasoning(self) -> None:
+        if self._reasoning_buf:
+            self._action_log.append(f"💭 {self._reasoning_buf}")
+            self._reasoning_buf = ""
+
     def begin_stream(self, agent_name: str, agent_role: str, agent_model: str = "") -> None:
         self._stop_live()
         self._streaming = True
         self._stream_name = agent_name
         self._stream_buf = ""
-        self._tool_status = ""
+        self._reasoning_buf = ""
+        self._action_log = []
         self._agent_meta[agent_name] = {"role": agent_role, "model": agent_model}
-        self._live = Live(self._build_panel(), console=self.console, refresh_per_second=10, transient=False)
+        self._live = Live(
+            self._build_panel(), console=self.console, refresh_per_second=10, transient=False
+        )
         self._live.start()
 
     def on_chunk(self, text: str) -> None:
@@ -91,24 +116,52 @@ class CliDisplay(DisplayBase):
         self._stream_buf += text
         self._update_live()
 
+    def on_reasoning_chunk(self, text: str) -> None:
+        if not self._streaming:
+            return
+        self._reasoning_buf += text
+        self._update_live()
+
     # ── Message dispatch ───────────────────────────────────
 
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
-            tc_names = [tc.get("function", {}).get("name", "?") for tc in message.tool_calls]
-            self._tool_status = f"执行工具: {', '.join(tc_names)}"
+            self._flush_reasoning()
+            for tc in message.tool_calls:
+                func = tc.get("function", {})
+                name = func.get("name", "?")
+                args_str = func.get("arguments", "{}")
+                try:
+                    args_dict = json.loads(args_str)
+                    args_parts = []
+                    for k, v in args_dict.items():
+                        if isinstance(v, str):
+                            args_parts.append(f'{k}="{v}"')
+                        else:
+                            args_parts.append(f"{k}={v}")
+                    args_display = ", ".join(args_parts)
+                except (json.JSONDecodeError, Exception):
+                    args_display = args_str[:60]
+                if len(args_display) > 60:
+                    args_display = args_display[:57] + "..."
+                self._action_log.append(f"🔧 调用 {name}({args_display})")
             self._update_live()
             return
 
         if message.msg_type == MessageType.tool_result:
-            if not message.metadata.get("tool_success", True):
-                self._tool_status = f"❌ 错误: {message.content[:200]}"
+            tool_name = message.metadata.get("tool_name", "工具")
+            tool_success = message.metadata.get("tool_success", True)
+            if tool_success:
+                summary = message.content[:80].replace("\n", " ")
+                self._action_log.append(f"✅ {tool_name} → {summary}...")
             else:
-                self._tool_status = ""
+                summary = message.content[:120]
+                self._action_log.append(f"❌ {tool_name} → {summary}")
             self._update_live()
             return
 
         if self._streaming and self._stream_name == message.sender:
+            self._flush_reasoning()
             self._streaming = False
             self._stop_live()
             return
@@ -138,8 +191,12 @@ class CliDisplay(DisplayBase):
 
         agents_text = "\n".join(agent_lines)
         self.console.print(
-            Panel(f"[bold]话题:[/bold] {topic}\n\n[bold]参与者:[/bold]\n{agents_text}",
-                  title="群聊开始", border_style="bright_blue"))
+            Panel(
+                f"[bold]话题:[/bold] {topic}\n\n[bold]参与者:[/bold]\n{agents_text}",
+                title="群聊开始",
+                border_style="bright_blue",
+            )
+        )
         self.console.print()
 
     def print_result(self, result: Any) -> None:
@@ -156,7 +213,9 @@ class CliDisplay(DisplayBase):
         meta = self._agent_meta.get(sender, {})
         title = self._header(sender, meta.get("role", ""), meta.get("model", ""), color)
         self.console.print()
-        self.console.print(Panel(content, title=title, title_align="left", border_style=color, padding=(0, 1)))
+        self.console.print(
+            Panel(content, title=title, title_align="left", border_style=color, padding=(0, 1))
+        )
 
     def _print_chat(self, msg: Message) -> None:
         self._stop_live()
@@ -170,4 +229,6 @@ class CliDisplay(DisplayBase):
         color = self._get_color(msg.sender)
         title = f"[bold {color}]{msg.sender}[/bold {color}] [dim]用户[/dim]"
         self.console.print()
-        self.console.print(Panel(msg.content, title=title, title_align="left", border_style=color, padding=(0, 1)))
+        self.console.print(
+            Panel(msg.content, title=title, title_align="left", border_style=color, padding=(0, 1))
+        )
