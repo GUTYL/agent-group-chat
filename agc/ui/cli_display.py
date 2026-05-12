@@ -78,7 +78,10 @@ class CliDisplay(DisplayBase):
         if self._reasoning_buf:
             parts.append(f"[dim]💭 思考: {self._reasoning_buf}[/dim]")
         if self._stream_buf:
-            parts.append(self._stream_buf)
+            display = self._stream_buf
+            if display.startswith(": "):
+                display = display[2:].strip()
+            parts.append(display)
 
         content = "\n\n".join(parts) if parts else "[dim]⏳ 思考中...[/dim]"
         return Panel(content, title=title, title_align="left", border_style=color, padding=(0, 1))

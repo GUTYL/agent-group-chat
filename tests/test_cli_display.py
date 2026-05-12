@@ -222,3 +222,13 @@ class TestActionLog:
         assert "web_search" in rendered_str
         assert "Still thinking" in rendered_str
         assert "My answer" in rendered_str
+
+    def test_strip_leading_colon_space(self, display):
+        """DeepSeek 有时会在回复前加 ': '，Panel 应自动 strip"""
+        display.begin_stream("alice", "研究员")
+        display._stream_buf = ": 从数据来看，BTC..."
+
+        panel = display._build_panel()
+        rendered = panel.renderable if hasattr(panel, "renderable") else str(panel)
+        rendered_str = str(rendered)
+        assert "从数据来看" in rendered_str
