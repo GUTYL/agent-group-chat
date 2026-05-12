@@ -27,5 +27,8 @@ data/
 # OpenCode plans
 .opencode/
 
+# Superpowers (brainstorming artifacts)
+.superpowers/
+
 # OS
 .DS_Store
