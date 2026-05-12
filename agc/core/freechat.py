@@ -150,6 +150,9 @@ class FreeChatSession(ChatSession):
 
             self._session_store.append(self.session_id, round_msgs)
 
+        if not self.history and self.session_id:
+            self._session_store.delete_session(self.session_id)
+
     def _show_welcome(self) -> None:
         """显示欢迎信息"""
         try:
