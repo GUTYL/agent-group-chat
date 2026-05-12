@@ -9,7 +9,7 @@
 - **自动终止** — 共识检测 + 最大轮次双重保障，话题模式自动结束并生成总结；自由群聊模式持续运行
 - **会话持久化** — 话题模式自动保存总结到 `data/sessions/topics/`，自由群聊保存到 `data/sessions/freechat/`，支持恢复历史会话
 - **工具生态** — 内置网页搜索（DuckDuckGo）、网页抓取（Jina Reader + readability-lxml 双提取器 + SSRF防护）、工作空间（文件读写+代码执行）、持久化记忆
-- **流式输出** — LLM 回复实时流式显示，打字机效果
+- **流式输出** — LLM 回复实时流式显示，打字机效果；Panel 中同步展示 agent 思考过程（reasoning）和工具调用详情
 - **人类介入** — 话题模式支持 `always`（每轮等待）/ `on_demand`（随时介入）/ `off` 三种模式
 - **YAML配置** — 用声明式配置文件定义Agent和群聊参数
 - **OpenAI兼容** — 支持所有OpenAI兼容的API端点（DeepSeek、本地模型等）
@@ -163,6 +163,7 @@ display = CliDisplay()
 session.on_message(display.on_message)
 session.on_chunk(display.on_chunk)
 session.on_speaker_start(display.begin_stream)
+session.on_reasoning(display.on_reasoning_chunk)
 
 session.run()  # 进入 REPL 循环
 ```
@@ -285,7 +286,7 @@ agc/
 
 ```bash
 uv sync --extra dev          # 安装所有依赖
-uv run pytest tests/ -v       # 运行全部 83 个测试
+uv run pytest tests/ -v       # 运行全部 96 个测试
 uv run pytest tests/test_message.py::test_message_to_json -v  # 单个测试
 ```
 

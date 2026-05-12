@@ -4,7 +4,7 @@
 
 ```bash
 uv sync --extra dev           # install all deps (including test + prompt_toolkit + ruff)
-uv run pytest tests/ -v       # run all 83 tests
+uv run pytest tests/ -v       # run all 96 tests
 uv run pytest tests/test_message.py::test_message_to_json -v  # single test
 uv run ruff check             # lint
 uv run ruff format            # auto-format
