@@ -87,71 +87,72 @@ class FreeChatSession(ChatSession):
         if not self.session_id:
             self.session_id = self._session_store.create_session()
 
-        self._build_system_prompts()
-        self._show_welcome()
-
         try:
-            from prompt_toolkit import PromptSession
+            self._build_system_prompts()
+            self._show_welcome()
 
-            session = PromptSession()
-            use_pt = True
-        except ImportError:
-            use_pt = False
-
-        while True:
             try:
-                if use_pt:
-                    user_input = session.prompt(f"[{self.user_name}] ").strip()
-                else:
-                    user_input = input(f"[{self.user_name}] ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\n再见！")
-                break
+                from prompt_toolkit import PromptSession
 
-            if not user_input:
-                continue
+                session = PromptSession()
+                use_pt = True
+            except ImportError:
+                use_pt = False
 
-            if user_input.startswith("/"):
-                cmd_result = self._handle_command(user_input)
-                if cmd_result == "quit":
-                    print("再见！")
+            while True:
+                try:
+                    if use_pt:
+                        user_input = session.prompt(f"[{self.user_name}] ").strip()
+                    else:
+                        user_input = input(f"[{self.user_name}] ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n再见！")
                     break
-                continue
 
-            user_msg = self._create_user_message(user_input)
-            self._emit_message(user_msg)
+                if not user_input:
+                    continue
 
-            if not self._named and len(self.history) <= 2:
-                self._try_name_session(user_input)
+                if user_input.startswith("/"):
+                    cmd_result = self._handle_command(user_input)
+                    if cmd_result == "quit":
+                        print("再见！")
+                        break
+                    continue
 
-            response_plan = self._scheduler.plan_responses(self.history)
+                user_msg = self._create_user_message(user_input)
+                self._emit_message(user_msg)
 
-            round_msgs = [user_msg]
-            # 首轮：让 scheduler 选出该回的 agent
-            for agent in response_plan:
-                self._emit_speaker_start(agent.name, agent.role, agent.model)
-                agent_msgs, tokens = self._generate_response(agent)
-                round_msgs.extend(agent_msgs)
-                self._total_tokens += tokens
+                if not self._named and len(self.history) <= 2:
+                    self._try_name_session(user_input)
 
-            # 自动延续：agent @mention 其他人时，继续让被@的agent回应
-            for _ in range(AUTO_CONTINUE_MAX):
-                last_msg = self.history[-1] if self.history else None
-                if not last_msg or not last_msg.has_mentions:
-                    break
-                extra_plan = self._scheduler.plan_responses(self.history)
-                if not extra_plan:
-                    break
-                for agent in extra_plan:
+                response_plan = self._scheduler.plan_responses(self.history)
+
+                round_msgs = [user_msg]
+                # 首轮：让 scheduler 选出该回的 agent
+                for agent in response_plan:
                     self._emit_speaker_start(agent.name, agent.role, agent.model)
                     agent_msgs, tokens = self._generate_response(agent)
                     round_msgs.extend(agent_msgs)
                     self._total_tokens += tokens
 
-            self._session_store.append(self.session_id, round_msgs)
+                # 自动延续：agent @mention 其他人时，继续让被@的agent回应
+                for _ in range(AUTO_CONTINUE_MAX):
+                    last_msg = self.history[-1] if self.history else None
+                    if not last_msg or not last_msg.has_mentions:
+                        break
+                    extra_plan = self._scheduler.plan_responses(self.history)
+                    if not extra_plan:
+                        break
+                    for agent in extra_plan:
+                        self._emit_speaker_start(agent.name, agent.role, agent.model)
+                        agent_msgs, tokens = self._generate_response(agent)
+                        round_msgs.extend(agent_msgs)
+                        self._total_tokens += tokens
 
-        if not self.history and self.session_id:
-            self._session_store.delete_session(self.session_id)
+                self._session_store.append(self.session_id, round_msgs)
+        finally:
+            if self.session_id and not self.history:
+                self._session_store.delete_session(self.session_id)
 
     def _show_welcome(self) -> None:
         """显示欢迎信息"""
