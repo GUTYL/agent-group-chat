@@ -191,6 +191,7 @@ def topic(
     room.on_chunk(display.on_chunk)
     room.on_speaker_start(display.begin_stream)
     room.on_reasoning(display.on_reasoning_chunk)
+    room.on_tool_batch(display.flush_tool_status)
     display.print_header(topic, agents, human_loop=human_loop)
     result = room.chat(topic)
     display.print_result(result)
@@ -289,6 +290,7 @@ def room(
     session.on_chunk(display.on_chunk)
     session.on_speaker_start(display.begin_stream)
     session.on_reasoning(display.on_reasoning_chunk)
+    session.on_tool_batch(display.flush_tool_status)
 
     if resume and session_id:
         try:

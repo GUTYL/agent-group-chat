@@ -127,6 +127,10 @@ class CliDisplay(DisplayBase):
 
     # ── Message dispatch ───────────────────────────────────
 
+    def flush_tool_status(self) -> None:
+        """工具批次完成后统一刷新一次 Live 面板，避免频繁更新导致面板堆叠"""
+        self._update_live()
+
     def on_message(self, message: Message) -> None:
         if message.msg_type == MessageType.tool_call:
             self._reasoning_buf = ""
@@ -150,7 +154,6 @@ class CliDisplay(DisplayBase):
                 self._action_log.append(f"🔧 调用 {name}({args_display})")
             if len(self._action_log) > 20:
                 self._action_log = self._action_log[-20:]
-            self._update_live()
             return
 
         if message.msg_type == MessageType.tool_result:
@@ -163,7 +166,6 @@ class CliDisplay(DisplayBase):
                 self._action_log.append(f"❌ {tool_name} → {summary}")
             if len(self._action_log) > 20:
                 self._action_log = self._action_log[-20:]
-            self._update_live()
             return
 
         if self._streaming and self._stream_name == message.sender:

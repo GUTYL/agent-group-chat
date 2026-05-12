@@ -266,6 +266,7 @@ class TopicSession(ChatSession):
         result_messages.extend(msgs)
         for msg in msgs:
             self._notify_display(msg)
+        self._emit_tool_batch()
 
     def _force_text_response(
         self,

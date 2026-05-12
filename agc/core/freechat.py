@@ -261,6 +261,7 @@ class FreeChatSession(ChatSession):
         for msg in msgs:
             self.history.append(msg)
             self._notify_display(msg)
+        self._emit_tool_batch()
 
     def _force_text_response(
         self,
@@ -399,24 +400,28 @@ class FreeChatSession(ChatSession):
         try:
             self._named = True
             name = self._generate_session_name(user_input)
-            self.session_id = self._session_store.rename_session(self.session_id, name)
+            if name:
+                new_id = f"{self.session_id}_{name}"
+                self.session_id = self._session_store.rename_session(self.session_id, new_id)
         except Exception as e:
             logger.debug(f"会话命名失败: {e}")
 
     def _generate_session_name(self, first_message: str) -> str:
         """用LLM生成会话名称"""
-        prompt = f"""根据用户的第一条消息，生成一个简短的中文标题（5-10个字），只返回标题，不要其他内容。
-
-用户消息: {first_message}"""
-
-        response = self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=30,
-        )
-        name = response.content.strip()
-        name = re.sub(r'["""\n\r]', "", name)
-        return name[:20] if name else f"session_{datetime.now().strftime('%H%M%S')}"
+        try:
+            response = self.llm.chat(
+                messages=[
+                    {"role": "user", "content": f"消息：{first_message}\n\n标题："},
+                ],
+                temperature=0.0,
+                max_tokens=10,
+            )
+            name = response.content or response.reasoning_content or ""
+            name = name.strip()
+            name = re.sub(r'["""\n\r]', "", name)
+            return name[:20]
+        except Exception:
+            return ""
 
     def _save_session(self) -> None:
         """保存会话（在退出时调用）"""

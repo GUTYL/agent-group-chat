@@ -61,6 +61,7 @@ class ChatSession(ABC):
         self._on_chunk_callbacks: list[Callable[[str], None]] = []
         self._on_speaker_callbacks: list[Callable[[str, str, str], None]] = []
         self._on_reasoning_callbacks: list[Callable[[str], None]] = []
+        self._on_tool_batch_callbacks: list[Callable[[], None]] = []
 
     # ── Initializers ───────────────────────────────────────
 
@@ -118,6 +119,13 @@ class ChatSession(ABC):
 
     def on_reasoning(self, callback: Callable[[str], None]) -> None:
         self._on_reasoning_callbacks.append(callback)
+
+    def on_tool_batch(self, callback: Callable[[], None]) -> None:
+        self._on_tool_batch_callbacks.append(callback)
+
+    def _emit_tool_batch(self) -> None:
+        for cb in self._on_tool_batch_callbacks:
+            cb()
 
     def _emit_chunk(self, text: str) -> None:
         for cb in self._on_chunk_callbacks:
