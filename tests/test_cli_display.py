@@ -212,7 +212,7 @@ class TestActionLog:
 
     def test_panel_includes_all_sections(self, display):
         display.begin_stream("alice", "研究员")
-        display._action_log = ["🔧 调用 web_search(query=...)", "✅ web_search → ..."]
+        display._action_log = ["🔧 调用 web_search(query=...)", "✅ web_search"]
         display._reasoning_buf = "Still thinking..."
         display._stream_buf = "My answer"
 

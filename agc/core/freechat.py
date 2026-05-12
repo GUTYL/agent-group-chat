@@ -430,4 +430,3 @@ class FreeChatSession(ChatSession):
         self.session_id = session_id
         if self.history:
             self._emit_system(f"已恢复会话，共 {len(self.history)} 条历史消息")
-            self._show_recent_history(10)

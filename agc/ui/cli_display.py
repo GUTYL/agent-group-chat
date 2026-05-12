@@ -154,10 +154,9 @@ class CliDisplay(DisplayBase):
             tool_name = message.metadata.get("tool_name", "工具")
             tool_success = message.metadata.get("tool_success", True)
             if tool_success:
-                summary = message.content[:80].replace("\n", " ")
-                self._action_log.append(f"✅ {tool_name} → {summary}...")
+                self._action_log.append(f"✅ {tool_name}")
             else:
-                summary = message.content[:120]
+                summary = message.content[:80].replace("\n", " ")
                 self._action_log.append(f"❌ {tool_name} → {summary}")
             if len(self._action_log) > 20:
                 self._action_log = self._action_log[-20:]
