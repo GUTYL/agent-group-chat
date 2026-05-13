@@ -58,6 +58,11 @@ def list_tools() -> dict[str, str]:
     return {name: t.description for name, t in _REGISTRY.items()}
 
 
+def clear_registry() -> None:
+    """清空工具注册表（用于测试隔离）"""
+    _REGISTRY.clear()
+
+
 def get_schemas_for_tools(tool_names: list[str]) -> list[dict]:
     """获取指定工具的 OpenAI function schemas"""
     schemas = []
@@ -86,6 +91,8 @@ def execute_tool_call(name: str, arguments: str | dict, owner: str = "") -> Tool
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
             return ToolResult(success=False, content=f"工具参数JSON解析失败: {arguments}")
+    elif arguments is None:
+        arguments = {}
 
     # 注入 _owner 参数（工作区工具需要知道调用者是谁）
     kwargs = dict(arguments)

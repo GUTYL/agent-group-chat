@@ -54,7 +54,10 @@ class Workspace:
 
     def read_other_workspace(self, owner: str, filepath: str) -> str:
         """只读访问其他Agent的工作空间"""
-        other_path = self.root / owner / filepath
+        other_path = (self.root / owner / filepath).resolve()
+        expected_root = (self.root / owner).resolve()
+        if not str(other_path).startswith(str(expected_root)):
+            return f"❌ 安全错误：不能读取工作空间外的路径: {filepath}"
         if not other_path.exists():
             return f"❌ 文件不存在: {owner}/{filepath}"
         return other_path.read_text(encoding="utf-8")

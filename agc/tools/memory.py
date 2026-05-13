@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
 from .base import ToolBase, ToolResult, register_tool
+
+logger = logging.getLogger(__name__)
 
 
 class SaveMemoryTool(ToolBase):
@@ -59,10 +62,12 @@ class SaveMemoryTool(ToolBase):
         memories = self._load_memories(memory_file)
 
         # 若key已存在则更新
+        existing = memories.get(key)
+        saved_at = existing["saved_at"] if existing else time.strftime("%Y-%m-%d %H:%M:%S")
         memories[key] = {
             "value": value,
             "tags": [t.strip() for t in tags.split(",") if t.strip()] if tags else [],
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "saved_at": saved_at,
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
@@ -236,6 +241,15 @@ def _load_memories(self, path: Path) -> dict:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            # 文件损坏时先备份再返回空 dict
+            backup = path.with_suffix(".json.bak")
+            try:
+                import shutil
+
+                shutil.copy2(path, backup)
+                logger.warning(f"记忆文件 {path} 损坏，已备份到 {backup}")
+            except OSError:
+                pass
             return {}
     return {}
 

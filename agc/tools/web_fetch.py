@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -113,10 +113,11 @@ def _resolve_to_ip(hostname: str) -> str | None:
     except ValueError:
         pass
     try:
+        socket.setdefaulttimeout(5)
         info = socket.getaddrinfo(hostname, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for _, _, _, _, sockaddr in info:
             return sockaddr[0]
-    except (socket.gaierror, IndexError):
+    except (socket.gaierror, socket.herror, TimeoutError, IndexError, OSError):
         pass
     return None
 
@@ -297,7 +298,8 @@ class WebFetchTool(ToolBase):
 
         try:
             with httpx.Client(timeout=30.0, proxy=self.proxy) as client:
-                r = client.get(f"{_JINA_READER_URL}/{url}", headers=headers)
+                encoded_url = quote(url, safe=":/")
+                r = client.get(f"{_JINA_READER_URL}/{encoded_url}", headers=headers)
                 if r.status_code == 429:
                     logger.debug("Jina Reader 限流 (429)，回退到本地抓取")
                     return None

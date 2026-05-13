@@ -283,6 +283,10 @@ class FreeChatSession(ChatSession):
 
         if cmd == "/clear":
             self.history = []
+            self._turn_counts = {a.name: 0 for a in self.agents}
+            self._named = False
+            self._total_tokens = 0
+            self.current_topic = None
             if self.session_id:
                 self._session_store.delete_session(self.session_id)
             self.session_id = self._session_store.create_session()

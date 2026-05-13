@@ -24,6 +24,8 @@ class OpenAIClient(LLMBase):
         default_model: str = "gpt-4o",
     ):
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not self.api_key:
+            raise ValueError("API key 未设置。请提供 api_key 参数或设置 OPENAI_API_KEY 环境变量。")
         self.base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         self.default_model = default_model
 

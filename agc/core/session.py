@@ -154,7 +154,10 @@ class ChatSession(ABC):
     # ── Shared helpers ─────────────────────────────────────
 
     def _current_round(self) -> int:
-        return len(self.history) // max(len(self.agents), 1)
+        chat_msgs = sum(
+            1 for m in self.history if m.msg_type in (MessageType.chat, MessageType.mention)
+        )
+        return max(chat_msgs, 1)
 
     def _notify_display(self, msg: Message) -> None:
         for cb in self._on_message_callbacks:
@@ -337,7 +340,7 @@ class ChatSession(ABC):
                 self._enabled_tools.append(name)
 
     def _resolve_tools(self, agent: AgentConfig) -> list[dict[str, Any]]:
-        return get_schemas_for_tools(agent.tools) if agent.tools else self._tool_schemas
+        return get_schemas_for_tools(agent.tools) if agent.tools is not None else self._tool_schemas
 
     def _build_workspace_prompts(self) -> dict[str, str]:
         prompts: dict[str, str] = {}
