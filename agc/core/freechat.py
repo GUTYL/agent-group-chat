@@ -10,8 +10,7 @@ from typing import Any
 
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
-from agc.core.session import MAX_TOOL_ROUNDS, ChatSession, SessionStore
-from agc.llm.base import LLMResponse
+from agc.core.session import ChatSession, SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +149,8 @@ class FreeChatSession(ChatSession):
                         self._total_tokens += tokens
 
                 self._session_store.append(self.session_id, round_msgs)
+                for m in round_msgs:
+                    m.metadata["_saved"] = True
         finally:
             if self.session_id and not self.history:
                 self._session_store.delete_session(self.session_id)
@@ -207,39 +208,11 @@ class FreeChatSession(ChatSession):
 
     def _generate_response(self, agent: AgentConfig) -> tuple[list[Message], int]:
         """生成单个agent的回复（带工具循环）"""
-        agent_tools = self._resolve_tools(agent)
-        llm = self._llm_clients.get(agent.name, self.llm)
-        result_messages: list[Message] = []
-        total_tokens = 0
+        return self._generate_agent_response(agent, emit_tool_to_history=True, emit_final=True)
 
-        for _ in range(MAX_TOOL_ROUNDS + 1):
-            ctx = self._build_context(agent)
-            response = llm.chat(
-                messages=ctx,
-                model=agent.model,
-                temperature=agent.temperature,
-                tools=agent_tools or None,
-                on_chunk=self._emit_chunk if self._stream else None,
-                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
-            )
-            total_tokens += response.total_tokens
-
-            if response.has_tool_calls:
-                self._execute_tool_calls(agent, response, result_messages)
-                continue
-
-            final_msg = self._create_final_message(agent, response, self._current_round())
-            self._emit_message(final_msg)
-            result_messages.append(final_msg)
-            break
-        else:
-            logger.debug(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成文本回复")
-            self._force_text_response(agent, llm, result_messages)
-
-        return result_messages, total_tokens
-
-    def _build_context(self, agent: AgentConfig) -> list[dict[str, Any]]:
-        """构建FreeChat上下文（消息已通过_emit_message进入history，无需重复追加）"""
+    def _build_response_context(
+        self, agent: AgentConfig, result_messages: list[Message]
+    ) -> list[dict[str, Any]]:
         return self._context.build_freechat_context(
             agent=agent,
             history=self.history,
@@ -249,29 +222,13 @@ class FreeChatSession(ChatSession):
             recent_window=self._recent_window,
         )
 
-    def _execute_tool_calls(
-        self,
-        agent: AgentConfig,
-        response: LLMResponse,
-        result_messages: list[Message],
-    ) -> None:
-        round_idx = self._current_round()
-        msgs = self._create_tool_messages(agent, response, round_idx)
-        result_messages.extend(msgs)
-        for msg in msgs:
-            self.history.append(msg)
-            self._notify_display(msg)
-        self._emit_tool_batch()
-
-    def _force_text_response(
-        self,
-        agent: AgentConfig,
-        llm: Any,
-        result_messages: list[Message],
+    def _force_text_response_fallback(
+        self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
     ) -> None:
         """强制无工具回复"""
         try:
-            ctx = self._build_context(agent)
+            ctx = self._build_response_context(agent, result_messages)
+            llm = self._llm_clients.get(agent.name, self.llm)
             response = llm.chat(
                 messages=ctx,
                 model=agent.model,
@@ -281,17 +238,11 @@ class FreeChatSession(ChatSession):
                 on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
             final_msg = self._create_final_message(agent, response, self._current_round())
-            self._emit_message(final_msg)
+            if emit_final:
+                self._emit_message(final_msg)
             result_messages.append(final_msg)
         except Exception as e:
             logger.warning(f"强制无工具回复失败: {e}")
-
-    def _emit_message(self, msg: Message) -> None:
-        """发射消息到所有回调，同时加入history"""
-        self.history.append(msg)
-        if not msg.metadata.get("_emitted"):
-            for cb in self._on_message_callbacks:
-                cb(msg)
 
     def _handle_command(self, raw_input: str) -> str | None:
         """处理斜杠命令，返回 'quit' 表示退出"""
@@ -398,11 +349,11 @@ class FreeChatSession(ChatSession):
     def _try_name_session(self, user_input: str) -> None:
         """尝试用LLM给会话命名"""
         try:
-            self._named = True
             name = self._generate_session_name(user_input)
             if name:
                 new_id = f"{self.session_id}_{name}"
                 self.session_id = self._session_store.rename_session(self.session_id, new_id)
+                self._named = True
         except Exception as e:
             logger.debug(f"会话命名失败: {e}")
 
@@ -410,15 +361,17 @@ class FreeChatSession(ChatSession):
         """用LLM生成会话名称"""
         try:
             response = self.llm.chat(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "根据消息内容生成5-10字的会话标题。只输出标题，不要任何其他文字。\n\n"
-                        "消息：今天天气怎么样\n标题：天气查询\n\n"
-                        "消息：帮我写个Python脚本\n标题：Python编程求助\n\n"
-                        f"消息：{first_message}\n标题："
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "根据消息内容生成5-10字的会话标题。只输出标题，不要任何其他文字。\n\n"
+                            "消息：今天天气怎么样\n标题：天气查询\n\n"
+                            "消息：帮我写个Python脚本\n标题：Python编程求助\n\n"
+                            f"消息：{first_message}\n标题："
+                        ),
+                    }
+                ],
                 temperature=0.0,
             )
             name = (response.content or response.reasoning_content or "").strip()
@@ -433,11 +386,15 @@ class FreeChatSession(ChatSession):
             unsaved = [m for m in self.history if not getattr(m, "_saved", False)]
             if unsaved:
                 self._session_store.append(self.session_id, unsaved)
+                for m in unsaved:
+                    m.metadata["_saved"] = True
 
     def load_session(self, session_id: str) -> None:
         """加载历史会话"""
         self.history = self._session_store.load_session(session_id)
         self.session_id = session_id
+        for msg in self.history:
+            msg.metadata["_saved"] = True
         if self.history:
             recent = self.history[-10:]
             for msg in recent:

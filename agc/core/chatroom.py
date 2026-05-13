@@ -6,13 +6,14 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
 from agc.core.agent import AgentConfig
 from agc.core.human_in_loop import HumanInTheLoop
 from agc.core.message import Message, MessageType
-from agc.core.session import MAX_TOOL_ROUNDS, ChatSession
+from agc.core.session import ChatSession
 from agc.terminators.composite import CompositeTerminator
 from agc.terminators.consensus import ConsensusTerminator
 from agc.terminators.max_rounds import MaxRoundsTerminator
@@ -108,6 +109,7 @@ class TopicSession(ChatSession):
 
     def chat(self, topic: str) -> ChatResult:
         self._reset_state()
+        self._current_topic = topic
         self._build_system_prompts(topic)
         self._emit_system(f"讨论话题: {topic}")
 
@@ -120,6 +122,7 @@ class TopicSession(ChatSession):
                 if self._all_exhausted():
                     self._emit_system("所有参与者已达到发言上限，讨论结束。")
                     break
+                round_idx += 1
                 continue
 
             self._emit_speaker_start(speaker.name, speaker.role, speaker.model)
@@ -178,7 +181,7 @@ class TopicSession(ChatSession):
     def _process_messages(self, messages: list[Message], speaker_name: str, tokens: int) -> None:
         for msg in messages:
             self.history.append(msg)
-            if msg.msg_type == MessageType.chat:
+            if msg.msg_type in (MessageType.chat, MessageType.mention):
                 self._turn_counts[speaker_name] += 1
             if msg.metadata.get("_emitted"):
                 continue
@@ -215,70 +218,28 @@ class TopicSession(ChatSession):
     # ── Response generation ────────────────────────────────
 
     def _generate_response(self, agent: AgentConfig, topic: str) -> tuple[list[Message], int]:
-        agent_tools = self._resolve_tools(agent)
-        llm = self._llm_clients.get(agent.name, self.llm)
-        result_messages: list[Message] = []
-        total_tokens = 0
-        round_idx = self._current_round()
+        return self._generate_agent_response(agent)
 
-        for _ in range(MAX_TOOL_ROUNDS + 1):
-            ctx = self._build_context(agent, topic, result_messages)
-            response = llm.chat(
-                messages=ctx,
-                model=agent.model,
-                temperature=agent.temperature,
-                tools=agent_tools or None,
-                on_chunk=self._emit_chunk if self._stream else None,
-                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
-            )
-            total_tokens += response.total_tokens
-
-            if response.has_tool_calls:
-                self._execute_tool_calls(agent, response, result_messages, round_idx)
-                continue
-
-            result_messages.append(self._create_final_message(agent, response, round_idx))
-            break
-        else:
-            logger.debug(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成文本回复")
-            self._force_text_response(agent, topic, llm, result_messages, round_idx, total_tokens)
-
-        return result_messages, total_tokens
-
-    def _build_context(
-        self, agent: AgentConfig, topic: str, result_messages: list[Message]
-    ) -> list[dict[str, any]]:
+    def _build_response_context(
+        self, agent: AgentConfig, result_messages: list[Message]
+    ) -> list[dict[str, Any]]:
         ctx = self._context.build_messages(
             agent,
-            topic,
+            self._current_topic,
             self.history,
-            self.config.agents,
+            self.agents,
             system_prompt=self._system_prompts.get(agent.name),
         )
         for rm in result_messages:
             ctx.append(rm.to_openai_msg())
         return ctx
 
-    def _execute_tool_calls(
-        self, agent: AgentConfig, response, result_messages: list[Message], round_idx: int
-    ) -> None:
-        msgs = self._create_tool_messages(agent, response, round_idx)
-        result_messages.extend(msgs)
-        for msg in msgs:
-            self._notify_display(msg)
-        self._emit_tool_batch()
-
-    def _force_text_response(
-        self,
-        agent: AgentConfig,
-        topic: str,
-        llm,
-        result_messages: list[Message],
-        round_idx: int,
-        total_tokens: int,
+    def _force_text_response_fallback(
+        self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
     ) -> None:
         try:
-            ctx = self._build_context(agent, topic, result_messages)
+            ctx = self._build_response_context(agent, result_messages)
+            llm = self._llm_clients.get(agent.name, self.llm)
             response = llm.chat(
                 messages=ctx,
                 model=agent.model,
@@ -287,7 +248,9 @@ class TopicSession(ChatSession):
                 on_chunk=self._emit_chunk if self._stream else None,
                 on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
-            result_messages.append(self._create_final_message(agent, response, round_idx))
+            result_messages.append(
+                self._create_final_message(agent, response, self._current_round())
+            )
         except Exception as e:
             logger.warning(f"强制无工具回复失败: {e}")
 

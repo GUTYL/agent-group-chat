@@ -215,6 +215,86 @@ class ChatSession(ABC):
             messages.append(tool_msg)
         return messages
 
+    # ── Unified response generation ────────────────────────
+
+    def _generate_agent_response(
+        self,
+        agent: AgentConfig,
+        *,
+        emit_tool_to_history: bool = False,
+        emit_final: bool = False,
+    ) -> tuple[list[Message], int]:
+        """统一的 agent 回复生成（带工具循环）
+
+        Args:
+            agent: 生成回复的 agent
+            emit_tool_to_history: True 时 tool 消息立即加入 history（FreeChat 模式）
+            emit_final: True 时最终消息立即 emit（FreeChat 模式）
+
+        Returns:
+            (result_messages, total_tokens)
+        """
+        agent_tools = self._resolve_tools(agent)
+        llm = self._llm_clients.get(agent.name, self.llm)
+        result_messages: list[Message] = []
+        total_tokens = 0
+
+        for _ in range(MAX_TOOL_ROUNDS + 1):
+            ctx = self._build_response_context(agent, result_messages)
+            response = llm.chat(
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
+                tools=agent_tools or None,
+                on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
+            )
+            total_tokens += response.total_tokens
+
+            if response.has_tool_calls:
+                msgs = self._create_tool_messages(agent, response, self._current_round())
+                result_messages.extend(msgs)
+                if emit_tool_to_history:
+                    for msg in msgs:
+                        self.history.append(msg)
+                for msg in msgs:
+                    self._notify_display(msg)
+                self._emit_tool_batch()
+                continue
+
+            final_msg = self._create_final_message(agent, response, self._current_round())
+            if emit_final:
+                self._emit_message(final_msg)
+            result_messages.append(final_msg)
+            break
+        else:
+            logger.debug(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成文本回复")
+            self._force_text_response_fallback(agent, result_messages, emit_final)
+
+        return result_messages, total_tokens
+
+    def _build_response_context(
+        self, agent: AgentConfig, result_messages: list[Message]
+    ) -> list[dict[str, Any]]:
+        """构建 LLM 请求上下文。子类实现。"""
+        raise NotImplementedError
+
+    def _force_text_response_fallback(
+        self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
+    ) -> None:
+        """工具循环超限时强制生成文本回复。子类实现。"""
+        raise NotImplementedError
+
+    def _emit_message(self, msg: Message) -> None:
+        """发射消息到所有回调，同时加入 history。
+
+        默认实现仅加入 history 并触发回调。子类可覆盖（如 FreeChatSession）。
+        """
+        self.history.append(msg)
+        if not msg.metadata.get("_emitted"):
+            for cb in self._on_message_callbacks:
+                cb(msg)
+
     # ── Tools ──────────────────────────────────────────────
 
     def _auto_register_tools(self) -> None:
