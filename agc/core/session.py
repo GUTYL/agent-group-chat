@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import datetime
@@ -242,8 +243,17 @@ class ChatSession(ABC):
         result_messages: list[Message] = []
         total_tokens = 0
 
-        for _ in range(MAX_TOOL_ROUNDS + 1):
+        for tool_round in range(MAX_TOOL_ROUNDS + 1):
             ctx = self._build_response_context(agent, result_messages)
+            t_start = time.monotonic()
+            logger.info(
+                "LLM调用 agent=%s model=%s msgs=%d tools=%d round=%d",
+                agent.name,
+                agent.model,
+                len(ctx),
+                len(agent_tools),
+                tool_round,
+            )
             response = llm.chat(
                 messages=ctx,
                 model=agent.model,
@@ -252,7 +262,15 @@ class ChatSession(ABC):
                 on_chunk=self._emit_chunk if self._stream else None,
                 on_reasoning_chunk=self._emit_reasoning if self._stream else None,
             )
+            elapsed = time.monotonic() - t_start
             total_tokens += response.total_tokens
+            logger.info(
+                "LLM响应 agent=%s tokens=%d finish=%s elapsed=%.2fs",
+                agent.name,
+                response.total_tokens,
+                response.finish_reason,
+                elapsed,
+            )
 
             if response.has_tool_calls:
                 msgs = self._create_tool_messages(agent, response, self._current_round())
@@ -262,6 +280,15 @@ class ChatSession(ABC):
                         self.history.append(msg)
                 for msg in msgs:
                     self._notify_display(msg)
+                    if msg.msg_type == MessageType.tool_result:
+                        tool_name = msg.metadata.get("tool_name", "?")
+                        tool_ok = msg.metadata.get("tool_success", False)
+                        logger.info(
+                            "工具执行 agent=%s tool=%s success=%s",
+                            agent.name,
+                            tool_name,
+                            tool_ok,
+                        )
                 self._emit_tool_batch()
                 continue
 
@@ -271,7 +298,11 @@ class ChatSession(ABC):
             result_messages.append(final_msg)
             break
         else:
-            logger.debug(f"Agent {agent.name} 工具调用超过 {MAX_TOOL_ROUNDS} 轮，强制生成文本回复")
+            logger.warning(
+                "工具循环超限 agent=%s max_rounds=%d",
+                agent.name,
+                MAX_TOOL_ROUNDS,
+            )
             self._force_text_response_fallback(agent, result_messages, emit_final)
 
         return result_messages, total_tokens

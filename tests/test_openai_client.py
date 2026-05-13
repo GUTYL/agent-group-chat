@@ -27,9 +27,8 @@ def test_init_from_env(monkeypatch):
 
 
 def test_init_empty_key_raises():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="API key"):
-            OpenAIClient()
+    with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError, match="API key"):
+        OpenAIClient()
 
 
 def test_count_tokens_known_model():

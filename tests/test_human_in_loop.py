@@ -29,7 +29,7 @@ def test_human_input_with_callback():
     responses = ["我觉得应该用令牌桶", "skip"]
     idx = [0]
 
-    def callback(round_idx, last_speaker):
+    def callback(_round_idx, _last_speaker):
         if idx[0] < len(responses):
             resp = responses[idx[0]]
             idx[0] += 1

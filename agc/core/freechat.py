@@ -86,6 +86,8 @@ class FreeChatSession(ChatSession):
         if not self.session_id:
             self.session_id = self._session_store.create_session()
 
+        logger.info("自由群聊开始 session_id=%s agents=%d", self.session_id, len(self.agents))
+
         try:
             self._build_system_prompts()
             self._show_welcome()
@@ -106,6 +108,7 @@ class FreeChatSession(ChatSession):
                         user_input = input(f"[{self.user_name}] ").strip()
                 except (EOFError, KeyboardInterrupt):
                     print("\n再见！")
+                    logger.info("自由群聊结束 reason=interrupt session_id=%s", self.session_id)
                     break
 
                 if not user_input:
@@ -115,6 +118,7 @@ class FreeChatSession(ChatSession):
                     cmd_result = self._handle_command(user_input)
                     if cmd_result == "quit":
                         print("再见！")
+                        logger.info("自由群聊结束 reason=quit session_id=%s", self.session_id)
                         break
                     continue
 
@@ -154,6 +158,7 @@ class FreeChatSession(ChatSession):
         finally:
             if self.session_id and not self.history:
                 self._session_store.delete_session(self.session_id)
+                logger.info("空会话已删除 session_id=%s", self.session_id)
 
     def _show_welcome(self) -> None:
         """显示欢迎信息"""

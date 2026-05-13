@@ -113,6 +113,7 @@ class TopicSession(ChatSession):
         self._build_system_prompts(topic)
         self._emit_system(f"讨论话题: {topic}")
 
+        logger.info("话题讨论开始 topic=%s agents=%d max_rounds=%d", topic, len(self.agents), self._max_rounds)
         round_idx = 0
         total_tokens = 0
 
@@ -121,6 +122,7 @@ class TopicSession(ChatSession):
             if self._speaker_exhausted(speaker):
                 if self._all_exhausted():
                     self._emit_system("所有参与者已达到发言上限，讨论结束。")
+                    logger.info("话题讨论结束 reason=all_exhausted rounds=%d tokens=%d", round_idx, total_tokens)
                     break
                 round_idx += 1
                 continue
@@ -131,16 +133,20 @@ class TopicSession(ChatSession):
             total_tokens += tokens
 
             if self._handle_human_pause(round_idx, speaker.name):
+                logger.info("话题讨论结束 reason=human_stop rounds=%d tokens=%d", round_idx, total_tokens)
                 break
 
             if self._check_termination():
+                logger.info("话题讨论结束 reason=terminator rounds=%d tokens=%d", round_idx, total_tokens)
                 break
 
             round_idx += 1
             if self._hit_hard_limit():
+                logger.info("话题讨论结束 reason=hard_limit rounds=%d tokens=%d", round_idx, total_tokens)
                 break
 
         summary = self._generate_summary(topic)
+        logger.info("话题讨论完成 summary_len=%d total_tokens=%d", len(summary), total_tokens)
         return ChatResult(
             topic=topic,
             messages=self.history,

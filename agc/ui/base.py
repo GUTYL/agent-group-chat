@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agc.core.message import Message
+if TYPE_CHECKING:
+    from agc.core.message import Message
 
 
 class DisplayBase(ABC):

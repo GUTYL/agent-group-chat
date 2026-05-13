@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +12,8 @@ import tiktoken
 from openai import OpenAI
 
 from .base import LLMBase, LLMResponse
+
+logger = logging.getLogger(__name__)
 
 FALLBACK_ENCODING = "cl100k_base"
 
@@ -69,12 +73,23 @@ class OpenAIClient(LLMBase):
         return kwargs
 
     def _normal_chat(self, kwargs: dict[str, Any]) -> LLMResponse:
-        response = self.client.chat.completions.create(**kwargs)
+        model = kwargs.get("model", "?")
+        msg_count = len(kwargs.get("messages", []))
+        tool_count = len(kwargs.get("tools", []))
+        logger.info("API请求 model=%s msgs=%d tools=%d stream=False", model, msg_count, tool_count)
+        try:
+            t_start = time.monotonic()
+            response = self.client.chat.completions.create(**kwargs)
+            elapsed = time.monotonic() - t_start
+        except Exception:
+            logger.exception("API请求失败 model=%s", model)
+            raise
+
         choice = response.choices[0]
         usage = response.usage
         message = choice.message
 
-        return LLMResponse(
+        result = LLMResponse(
             content=message.content or "",
             model=response.model,
             prompt_tokens=usage.prompt_tokens if usage else 0,
@@ -83,6 +98,15 @@ class OpenAIClient(LLMBase):
             tool_calls=self._extract_tool_calls(message),
             reasoning_content=getattr(message, "reasoning_content", "") or "",
         )
+        logger.info(
+            "API响应 model=%s prompt_tokens=%d completion_tokens=%d finish=%s elapsed=%.2fs",
+            result.model,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.finish_reason,
+            elapsed,
+        )
+        return result
 
     def _streamed_chat(
         self,
@@ -90,8 +114,18 @@ class OpenAIClient(LLMBase):
         on_chunk: Callable[[str], None],
         on_reasoning_chunk: Callable[[str], None] | None = None,
     ) -> LLMResponse:
+        model = kwargs.get("model", "?")
+        msg_count = len(kwargs.get("messages", []))
+        tool_count = len(kwargs.get("tools", []))
+        logger.info("API请求 model=%s msgs=%d tools=%d stream=True", model, msg_count, tool_count)
+
         kwargs["stream"] = True
-        stream = self.client.chat.completions.create(**kwargs)
+        t_start = time.monotonic()
+        try:
+            stream = self.client.chat.completions.create(**kwargs)
+        except Exception:
+            logger.exception("API流式请求失败 model=%s", model)
+            raise
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -126,11 +160,12 @@ class OpenAIClient(LLMBase):
             if getattr(delta, "tool_calls", None):
                 self._accumulate_tool_calls(delta.tool_calls, tool_calls_by_idx)
 
+        elapsed = time.monotonic() - t_start
         tc_list = (
             [tool_calls_by_idx[k] for k in sorted(tool_calls_by_idx)] if tool_calls_by_idx else None
         )
 
-        return LLMResponse(
+        result = LLMResponse(
             content="".join(content_parts),
             model=model,
             prompt_tokens=prompt_tokens,
@@ -139,6 +174,15 @@ class OpenAIClient(LLMBase):
             tool_calls=tc_list,
             reasoning_content="".join(reasoning_parts),
         )
+        logger.info(
+            "API响应 model=%s prompt_tokens=%d completion_tokens=%d finish=%s elapsed=%.2fs",
+            result.model,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.finish_reason,
+            elapsed,
+        )
+        return result
 
     # ── Tool call helpers ──────────────────────────────────
 

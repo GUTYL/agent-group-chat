@@ -1,13 +1,11 @@
 """单元测试 — TopicSession (ChatRoom)"""
 
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agc.core.agent import AgentConfig
-from agc.core.chatroom import ChatRoom, ChatResult, TopicSession
+from agc.core.chatroom import ChatResult, ChatRoom, TopicSession
 from agc.core.message import Message, MessageType
 
 
@@ -71,7 +69,7 @@ def test_topic_session_chat_single_round(patched_room):
 def test_topic_session_chat_respects_max_rounds(mock_llm):
     call_count = 0
 
-    def mock_chat(**kwargs):
+    def mock_chat(**_kwargs):
         nonlocal call_count
         call_count += 1
         return _make_mock_response(content=f"回复 {call_count}")
@@ -93,7 +91,7 @@ def test_speaker_exhausted_allows_unlimited(mock_llm):
 
     call_count = 0
 
-    def mock_chat(**kwargs):
+    def mock_chat(**_kwargs):
         nonlocal call_count
         call_count += 1
         return _make_mock_response(content=f"回复 {call_count}")
@@ -103,7 +101,7 @@ def test_speaker_exhausted_allows_unlimited(mock_llm):
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
         room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=5, workspace_root=None)
-        result = room.chat("话题")
+        room.chat("话题")
     assert call_count > 1
 
 
@@ -145,7 +143,7 @@ def test_all_exhausted_returns_false_with_unlimited():
 def test_generate_summary_on_error(mock_llm):
     call_count = 0
 
-    def mock_chat(**kwargs):
+    def mock_chat(**_kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:

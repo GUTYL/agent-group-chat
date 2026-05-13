@@ -17,6 +17,7 @@ from agc.core.chatroom import ChatRoom
 from agc.core.freechat import FreeChatSession
 from agc.core.human_in_loop import HumanInTheLoop, HumanMode
 from agc.core.session import SessionStore
+from agc.log_config import setup_logging
 from agc.tools.search import create_search_tool
 
 # 启动时加载 .env 文件
@@ -56,6 +57,10 @@ def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
             create_search_tool(provider=search_provider)
 
     return tool_names
+
+
+def _safe_log_id(text: str) -> str:
+    return re.sub(r'[\\/:*?"<>|]', "_", text)[:50]
 
 
 _DEFAULT_AGENTS = [
@@ -134,8 +139,12 @@ def topic(
     human: str = typer.Option("off", "--human", help="人类介入模式: off / always / on_demand"),
     human_name: str = typer.Option("human", "--human-name", help="人类在群聊中的名字"),
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="是否显示详细过程"),
+    log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
+    log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
 ):
     """启动一个多Agent群聊讨论"""
+
+    setup_logging("topic", f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{_safe_log_id(topic)}", log_dir=log_dir, level=log_level)
 
     # 初始化工具（搜索后端等显式指定项）
     tool_names = _setup_tools(tools, search)
@@ -215,6 +224,8 @@ def room(
     search: str = typer.Option("duckduckgo", "--search", help="搜索后端: duckduckgo"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="工作空间目录"),
     user_name: str = typer.Option("human", "--user-name", help="人类用户在群聊中的名字"),
+    log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
+    log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
 ):
     """启动IM风格自由群聊"""
 
@@ -229,6 +240,8 @@ def room(
             for s in sessions:
                 typer.echo(f"  {s}")
         return
+
+    setup_logging("freechat", resume or name or "", log_dir=log_dir, level=log_level)
 
     tool_names = _setup_tools(tools, search)
 

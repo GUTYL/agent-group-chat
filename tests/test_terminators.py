@@ -56,7 +56,7 @@ def test_consensus_terminator():
         Message(sender="alice", content="一致的看法", round_idx=4),
         Message(sender="bob", content="综上所述", round_idx=5),
     ]
-    stop, reason = terminator.should_stop(messages, agents)
+    stop, _reason = terminator.should_stop(messages, agents)
     assert stop
 
 

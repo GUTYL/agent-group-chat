@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
 from agc.llm.base import LLMBase
 
 from .base import SchedulerBase
+
+logger = logging.getLogger(__name__)
 
 # 角色关键词映射（零成本路由）
 ROLE_KEYWORDS: dict[str, list[str]] = {
@@ -52,22 +56,27 @@ class HybridScheduler(SchedulerBase):
             mentioned = history[-1].mentions[0]  # 取第一个@的人
             agent = self.get_agent(mentioned)
             if agent:
+                logger.info("调度决策 method=mention target=%s", agent.name)
                 return agent
 
         # 2. 关键词路由
         if history:
             agent = self._keyword_route(history[-1].content)
             if agent:
+                logger.info("调度决策 method=keyword target=%s", agent.name)
                 return agent
 
         # 3. LLM路由（可选，消耗token）
         if self.use_llm_router and self.llm and history:
             agent = self._llm_route(history)
             if agent:
+                logger.info("调度决策 method=llm_route target=%s", agent.name)
                 return agent
 
         # 4. RoundRobin 兜底
-        return self.agents[round_idx % len(self.agents)]
+        agent = self.agents[round_idx % len(self.agents)]
+        logger.info("调度决策 method=round_robin target=%s", agent.name)
+        return agent
 
     def plan_responses(self, history: list[Message]) -> list[AgentConfig]:
         """FreeChat模式：决定哪些agent应该回应
@@ -92,30 +101,38 @@ class HybridScheduler(SchedulerBase):
                 if agent and agent not in mentioned:
                     mentioned.append(agent)
             if mentioned:
+                targets = [a.name for a in mentioned]
+                logger.info("调度决策 method=mention target=%s", ", ".join(targets))
                 return mentioned
 
         # 2. "@all" 或 "大家" → 所有agent回应
         if last_msg.msg_type == MessageType.human_input:
             content_lower = last_msg.content.lower()
             if "@all" in content_lower or "大家" in content_lower:
+                logger.info("调度决策 method=all target=all(%d agents)", len(self.agents))
                 return list(self.agents)
 
             # 3. 关键词路由
             agent = self._keyword_route(last_msg.content)
             if agent:
+                logger.info("调度决策 method=keyword target=%s", agent.name)
                 return [agent]
 
         # 4. LLM路由 → 选最相关的一个agent
         if self.use_llm_router and self.llm:
             agent = self._llm_route(history)
             if agent:
+                logger.info("调度决策 method=llm_route target=%s", agent.name)
                 print(f"🤖 LLM路由 → @{agent.name}", flush=True)
                 return [agent]
+            logger.info("调度决策 method=llm_route result=miss")
             print("⚡ LLM路由未命中，使用兜底策略", flush=True)
 
         # 5. 默认兜底：首个agent回应
         if self.agents:
-            return [self.agents[0]]
+            agent = self.agents[0]
+            logger.info("调度决策 method=fallback target=%s", agent.name)
+            return [agent]
 
         return []
 

@@ -60,7 +60,7 @@ class ReadFileTool(ToolBase):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "读取你工作空间中的文件内容。也可以读取其他Agent工作空间的文件（只读）。",
+                "description": "读取你工作空间中的文件内容。也可以读取其他Agent工作空间的文件（只读）。",  # noqa: E501
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -145,13 +145,13 @@ class RunCodeTool(ToolBase):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "在你的工作空间中执行shell命令。可用于运行代码、安装包、运行测试等。命令在工作空间目录下执行。",
+                "description": "在你的工作空间中执行shell命令。可用于运行代码、安装包、运行测试等。命令在工作空间目录下执行。",  # noqa: E501
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "要执行的shell命令，如 'python script.py' 或 'pip install requests'",
+                            "description": "要执行的shell命令，如 'python script.py' 或 'pip install requests'",  # noqa: E501
                         },
                     },
                     "required": ["command"],

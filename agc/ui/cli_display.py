@@ -211,7 +211,10 @@ class CliDisplay(DisplayBase):
     def print_result(self, result: Any) -> None:
         if result.summary:
             self.console.print(Panel(result.summary, title="群聊总结", border_style="green"))
-        stats = f"轮数: {result.rounds} | 消息数: {len(result.messages)} | 总token: {result.total_tokens:,}"
+        stats = (
+            f"轮数: {result.rounds} | 消息数: {len(result.messages)}"
+            f" | 总token: {result.total_tokens:,}"
+        )
         self.console.print(f"[dim]{stats}[/dim]")
 
     # ── Message renderers ──────────────────────────────────

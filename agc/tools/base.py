@@ -83,6 +83,7 @@ def execute_tool_call(name: str, arguments: str | dict, owner: str = "") -> Tool
     """
     tool = _REGISTRY.get(name)
     if not tool:
+        logger.warning("工具未注册 tool=%s owner=%s", name, owner)
         return ToolResult(success=False, content=f"未知工具: {name}")
 
     # 参数可能是 JSON 字符串或已解析的 dict
@@ -90,6 +91,7 @@ def execute_tool_call(name: str, arguments: str | dict, owner: str = "") -> Tool
         try:
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
+            logger.warning("工具参数JSON解析失败 tool=%s args=%s", name, arguments[:200])
             return ToolResult(success=False, content=f"工具参数JSON解析失败: {arguments}")
     elif arguments is None:
         arguments = {}
@@ -99,8 +101,16 @@ def execute_tool_call(name: str, arguments: str | dict, owner: str = "") -> Tool
     if owner:
         kwargs["_owner"] = owner
 
+    logger.debug("工具调用 tool=%s owner=%s args=%s", name, owner, str(arguments)[:200])
     try:
-        return tool.execute(**kwargs)
+        result = tool.execute(**kwargs)
+        logger.info(
+            "工具结果 tool=%s success=%s len=%d",
+            name,
+            result.success,
+            len(result.content),
+        )
+        return result
     except Exception as e:
-        logger.error(f"工具 {name} 执行失败: {e}")
+        logger.error("工具执行异常 tool=%s owner=%s error=%s", name, owner, e, exc_info=True)
         return ToolResult(success=False, content=f"工具执行出错: {e}")
