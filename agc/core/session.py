@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agc import DEFAULT_SESSIONS_DIR
 from agc.core.agent import AgentConfig
 from agc.core.context import ContextManager
 from agc.core.message import Message, MessageType
@@ -43,6 +44,7 @@ class ChatSession(ABC):
         workspace_root: str | None = None,
         tools: list[str] | None = None,
         scheduler: str = "hybrid",
+        use_llm_route: bool = True,
     ):
         self.agents = agents
         self.history: list[Message] = []
@@ -55,7 +57,7 @@ class ChatSession(ABC):
         self._auto_register_tools()
         self._llm_clients = self._init_llm_clients(agents, llm, base_url, api_key)
         self.llm = llm or self._llm_clients[agents[0].name]
-        self._scheduler = self._init_scheduler(scheduler, agents)
+        self._scheduler = self._init_scheduler(scheduler, agents, use_llm_route)
         self._context = ContextManager(self.llm, max_tokens=context_window)
 
         self._on_message_callbacks: list[Callable[[Message], None]] = []
@@ -99,12 +101,11 @@ class ChatSession(ABC):
                 )
         return clients
 
-    @staticmethod
-    def _init_scheduler(name: str, agents: list[AgentConfig]) -> SchedulerBase:
+    def _init_scheduler(self, name: str, agents: list[AgentConfig], use_llm_route: bool = True) -> SchedulerBase:
         if name == "round_robin":
             return RoundRobinScheduler(agents)
         if name == "hybrid":
-            return HybridScheduler(agents, use_llm_router=True)
+            return HybridScheduler(agents, llm=self.llm, use_llm_router=use_llm_route)
         raise ValueError(f"未知调度策略: {name}")
 
     # ── Callback registration ──────────────────────────────
@@ -307,17 +308,17 @@ class ChatSession(ABC):
 
         return result_messages, total_tokens
 
+    @abstractmethod
     def _build_response_context(
         self, agent: AgentConfig, result_messages: list[Message]
     ) -> list[dict[str, Any]]:
         """构建 LLM 请求上下文。子类实现。"""
-        raise NotImplementedError
 
+    @abstractmethod
     def _force_text_response_fallback(
         self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
     ) -> None:
         """工具循环超限时强制生成文本回复。子类实现。"""
-        raise NotImplementedError
 
     def _emit_message(self, msg: Message) -> None:
         """发射消息到所有回调，同时加入 history。
@@ -409,7 +410,7 @@ class SessionStore:
     """JSONL文件存储的会话持久化"""
 
     def __init__(self, base_dir: Path | None = None):
-        self.base_dir = base_dir or Path("data/sessions")
+        self.base_dir = base_dir or Path(str(DEFAULT_SESSIONS_DIR))
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def create_session(self) -> str:

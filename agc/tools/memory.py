@@ -17,14 +17,64 @@ from .base import ToolBase, ToolResult, register_tool
 logger = logging.getLogger(__name__)
 
 
-class SaveMemoryTool(ToolBase):
+class MemoryToolBase(ToolBase):
+    """记忆工具基类，提供共享的文件操作辅助方法"""
+
+    def __init__(self, workspace_manager=None):
+        self.workspace_manager = workspace_manager
+
+    def _get_memory_path(self, owner: str) -> Path | None:
+        if not self.workspace_manager:
+            return None
+        ws = self.workspace_manager.get(owner)
+        return ws.path / "memory.json"
+
+    def _load_memories(self, path: Path) -> dict:
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                backup = path.with_suffix(".json.bak")
+                try:
+                    import shutil
+
+                    shutil.copy2(path, backup)
+                    logger.warning("记忆文件 %s 损坏，已备份到 %s", path, backup)
+                except OSError:
+                    pass
+                return {}
+        return {}
+
+    def _save_memories(self, path: Path, memories: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(memories, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _search(self, memories: dict, query: str) -> list[tuple[str, dict]]:
+        query_lower = query.lower()
+        results = []
+        for key, entry in memories.items():
+            score = 0
+            if query_lower == key.lower():
+                score += 10
+            elif query_lower in key.lower():
+                score += 5
+            if query_lower in entry.get("value", "").lower():
+                score += 3
+            for tag in entry.get("tags", []):
+                if query_lower in tag.lower():
+                    score += 4
+            if score > 0:
+                results.append((score, key, entry))
+
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [(key, entry) for _, key, entry in results]
+
+
+class SaveMemoryTool(MemoryToolBase):
     """保存一条记忆"""
 
     name = "save_memory"
     description = "保存一条关键事实、结论或笔记到记忆中，后续可用 recall_memory 取回"
-
-    def __init__(self, workspace_manager=None):
-        self.workspace_manager = workspace_manager
 
     def get_openai_schema(self) -> dict:
         return {
@@ -76,14 +126,11 @@ class SaveMemoryTool(ToolBase):
         return ToolResult(success=True, content=f"✅ 已保存记忆: {key}{tag_str}")
 
 
-class RecallMemoryTool(ToolBase):
+class RecallMemoryTool(MemoryToolBase):
     """召回记忆"""
 
     name = "recall_memory"
     description = "从记忆中搜索之前保存的信息"
-
-    def __init__(self, workspace_manager=None):
-        self.workspace_manager = workspace_manager
 
     def get_openai_schema(self) -> dict:
         return {
@@ -127,14 +174,11 @@ class RecallMemoryTool(ToolBase):
         return ToolResult(success=True, content="\n".join(lines))
 
 
-class ListMemoriesTool(ToolBase):
+class ListMemoriesTool(MemoryToolBase):
     """列出所有记忆"""
 
     name = "list_memories"
     description = "列出你保存的所有记忆"
-
-    def __init__(self, workspace_manager=None):
-        self.workspace_manager = workspace_manager
 
     def get_openai_schema(self) -> dict:
         return {
@@ -181,14 +225,11 @@ class ListMemoriesTool(ToolBase):
         return ToolResult(success=True, content="\n".join(lines))
 
 
-class DeleteMemoryTool(ToolBase):
+class DeleteMemoryTool(MemoryToolBase):
     """删除一条记忆"""
 
     name = "delete_memory"
     description = "删除一条不再需要的记忆"
-
-    def __init__(self, workspace_manager=None):
-        self.workspace_manager = workspace_manager
 
     def get_openai_schema(self) -> dict:
         return {
@@ -222,76 +263,6 @@ class DeleteMemoryTool(ToolBase):
         del memories[key]
         self._save_memories(memory_file, memories)
         return ToolResult(success=True, content=f"🗑️ 已删除记忆: {key}")
-
-
-# ── 辅助函数 ──
-
-
-def _get_memory_path(self, owner: str) -> Path | None:
-    """获取 agent 的记忆文件路径"""
-    if not self.workspace_manager:
-        return None
-    ws = self.workspace_manager.get(owner)
-    return ws.path / "memory.json"
-
-
-def _load_memories(self, path: Path) -> dict:
-    """加载记忆文件"""
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            # 文件损坏时先备份再返回空 dict
-            backup = path.with_suffix(".json.bak")
-            try:
-                import shutil
-
-                shutil.copy2(path, backup)
-                logger.warning(f"记忆文件 {path} 损坏，已备份到 {backup}")
-            except OSError:
-                pass
-            return {}
-    return {}
-
-
-def _save_memories(self, path: Path, memories: dict) -> None:
-    """保存记忆文件"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(memories, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _search(self, memories: dict, query: str) -> list[tuple[str, dict]]:
-    """在记忆中搜索，匹配key、value、tags"""
-    query_lower = query.lower()
-    results = []
-    for key, entry in memories.items():
-        score = 0
-        # key完全匹配
-        if query_lower == key.lower():
-            score += 10
-        # key包含
-        elif query_lower in key.lower():
-            score += 5
-        # value包含
-        if query_lower in entry.get("value", "").lower():
-            score += 3
-        # tags包含
-        for tag in entry.get("tags", []):
-            if query_lower in tag.lower():
-                score += 4
-        if score > 0:
-            results.append((score, key, entry))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-    return [(key, entry) for _, key, entry in results]
-
-
-# 将辅助函数绑定到工具类上（它们需要 workspace_manager）
-for _cls in [SaveMemoryTool, RecallMemoryTool, ListMemoriesTool, DeleteMemoryTool]:
-    _cls._get_memory_path = _get_memory_path
-    _cls._load_memories = _load_memories
-    _cls._save_memories = _save_memories
-    _cls._search = _search
 
 
 def register_memory_tools(workspace_manager) -> list[str]:

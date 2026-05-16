@@ -12,6 +12,7 @@ import typer
 import yaml
 from dotenv import load_dotenv
 
+from agc import DEFAULT_SESSIONS_DIR, DEFAULT_WORKSPACES_DIR
 from agc.core.agent import AgentConfig
 from agc.core.chatroom import ChatRoom
 from agc.core.freechat import FreeChatSession
@@ -27,7 +28,25 @@ app = typer.Typer(
     name="agc",
     help="Agent Group Chat — 多Agent群聊框架",
     add_completion=False,
+    pretty_exceptions_enable=False,
 )
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        from agc import __version__
+
+        typer.echo(f"agc v{__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False, "--version", "-V", help="显示版本号", callback=version_callback, is_eager=True
+    ),
+) -> None:
+    """Agent Group Chat — 多Agent群聊框架"""
 
 
 def _load_config(path: Path) -> dict:
@@ -94,7 +113,7 @@ def _make_default_agents(model: str, tool_names: list[str]) -> list[AgentConfig]
 
 def _save_topic_session(topic: str, result) -> None:
     """保存话题讨论总结到 data/sessions/topics/"""
-    sessions_dir = Path("data/sessions/topics")
+    sessions_dir = DEFAULT_SESSIONS_DIR / "topics"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     safe_topic = re.sub(r'[\\/:*?"<>|]', "_", topic)[:30]
@@ -141,6 +160,7 @@ def topic(
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="是否显示详细过程"),
     log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
     log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
+    no_llm_route: bool = typer.Option(False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"),
 ):
     """启动一个多Agent群聊讨论"""
 
@@ -173,7 +193,7 @@ def topic(
     effective_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
 
     # 工作空间
-    workspace_root = workspace or "./data/workspaces"
+    workspace_root = workspace or DEFAULT_WORKSPACES_DIR
 
     # 人类参与
     human_loop = HumanInTheLoop.create(mode_str=human, name=human_name)
@@ -190,6 +210,7 @@ def topic(
         tools=tool_names if tool_names else [],
         workspace_root=workspace_root,
         human=human_loop if human_loop.mode != HumanMode.off else None,
+        use_llm_route=not no_llm_route,
     )
 
     # 设置输出
@@ -226,12 +247,13 @@ def room(
     user_name: str = typer.Option("human", "--user-name", help="人类用户在群聊中的名字"),
     log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
     log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
+    no_llm_route: bool = typer.Option(False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"),
 ):
     """启动IM风格自由群聊"""
 
     # --list: 列出所有会话
     if list_sessions:
-        store = SessionStore(Path("data/sessions/freechat"))
+        store = SessionStore(DEFAULT_SESSIONS_DIR / "freechat")
         sessions = store.list_sessions()
         if not sessions:
             typer.echo("暂无保存的会话。")
@@ -258,9 +280,9 @@ def room(
 
     effective_api_key = api_key or os.environ.get("OPENAI_API_KEY")
     effective_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
-    workspace_root = workspace or "./data/workspaces"
+    workspace_root = workspace or DEFAULT_WORKSPACES_DIR
 
-    store = SessionStore(Path("data/sessions/freechat"))
+    store = SessionStore(DEFAULT_SESSIONS_DIR / "freechat")
     session_id = None
 
     # --resume: 恢复会话
@@ -293,6 +315,7 @@ def room(
         workspace_root=workspace_root,
         session_id=session_id,
         session_store=store,
+        use_llm_route=not no_llm_route,
     )
 
     # 设置显示
@@ -304,6 +327,7 @@ def room(
     session.on_speaker_start(display.begin_stream)
     session.on_reasoning(display.on_reasoning_chunk)
     session.on_tool_batch(display.flush_tool_status)
+    session._display = display
 
     if resume and session_id:
         try:
@@ -316,8 +340,9 @@ def room(
     session.run()
 
 
-@app.command()
-def agents():
+@app.command(name="templates")
+@app.command(name="agents", hidden=True)
+def list_templates():
     """列出可用的预设Agent模板"""
     from agc.templates import list_templates
 
@@ -329,14 +354,30 @@ def agents():
 @app.command()
 def tools_list():
     """列出可用的工具"""
-    from agc.tools.base import list_tools
+    from agc.tools.base import _REGISTRY, list_tools
+
+    # 预注册核心工具（无 workspace 需求）
+    if "web_fetch" not in _REGISTRY:
+        register_preview_tools()
 
     available = list_tools()
     if not available:
-        typer.echo("暂无已注册工具。工具会在启动群聊时自动注册。")
+        typer.echo("暂无已注册工具。")
     else:
         for name, desc in available.items():
             typer.echo(f"  {name}: {desc}")
+
+
+def register_preview_tools() -> None:
+    """为预览/列表注册不依赖 workspace 的工具"""
+    from agc.tools.base import _REGISTRY, register_tool
+    from agc.tools.search import DuckDuckGoSearchTool
+    from agc.tools.web_fetch import WebFetchTool
+
+    if "web_fetch" not in _REGISTRY:
+        register_tool(WebFetchTool())
+    if "web_search" not in _REGISTRY:
+        register_tool(DuckDuckGoSearchTool())
 
 
 if __name__ == "__main__":

@@ -123,10 +123,8 @@ class HybridScheduler(SchedulerBase):
             agent = self._llm_route(history)
             if agent:
                 logger.info("调度决策 method=llm_route target=%s", agent.name)
-                print(f"🤖 LLM路由 → @{agent.name}", flush=True)
                 return [agent]
             logger.info("调度决策 method=llm_route result=miss")
-            print("⚡ LLM路由未命中，使用兜底策略", flush=True)
 
         # 5. 默认兜底：首个agent回应
         if self.agents:
@@ -169,8 +167,8 @@ class HybridScheduler(SchedulerBase):
             for name in agent_names:
                 if name in raw:
                     return self.get_agent(name)
-            print(f"⚡ LLM路由返回未知内容: '{raw[:80]}'", flush=True)
+            logger.warning("LLM路由返回未知内容: '%s'", raw[:80])
         except Exception as e:
-            print(f"⚡ LLM路由调用失败: {e}", flush=True)
+            logger.warning("LLM路由调用失败: %s", e)
 
         return None

@@ -16,6 +16,9 @@ from .base import LLMBase, LLMResponse
 logger = logging.getLogger(__name__)
 
 FALLBACK_ENCODING = "cl100k_base"
+DEFAULT_TIMEOUT = 120.0
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_BASE_DELAY = 1.0
 
 
 class OpenAIClient(LLMBase):
@@ -26,16 +29,22 @@ class OpenAIClient(LLMBase):
         api_key: str | None = None,
         base_url: str | None = None,
         default_model: str = "gpt-4o",
+        timeout: float = DEFAULT_TIMEOUT,
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ):
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         if not self.api_key:
             raise ValueError("API key 未设置。请提供 api_key 参数或设置 OPENAI_API_KEY 环境变量。")
         self.base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         self.default_model = default_model
+        self.timeout = timeout
+        self.max_retries = max_retries
 
         client_kwargs: dict[str, str] = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
+        client_kwargs["timeout"] = self.timeout
+        client_kwargs["max_retries"] = 0
         self.client = OpenAI(**client_kwargs)
 
     def chat(
@@ -77,13 +86,21 @@ class OpenAIClient(LLMBase):
         msg_count = len(kwargs.get("messages", []))
         tool_count = len(kwargs.get("tools", []))
         logger.info("API请求 model=%s msgs=%d tools=%d stream=False", model, msg_count, tool_count)
-        try:
-            t_start = time.monotonic()
-            response = self.client.chat.completions.create(**kwargs)
-            elapsed = time.monotonic() - t_start
-        except Exception:
-            logger.exception("API请求失败 model=%s", model)
-            raise
+
+        for attempt in range(self.max_retries):
+            try:
+                t_start = time.monotonic()
+                response = self.client.chat.completions.create(**kwargs)
+                elapsed = time.monotonic() - t_start
+                break
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning("API请求失败 (attempt=%d/%d): %s, %.1fs后重试", attempt + 1, self.max_retries, e, delay)
+                    time.sleep(delay)
+                else:
+                    logger.exception("API请求失败 (final) model=%s", model)
+                    raise
 
         choice = response.choices[0]
         usage = response.usage
@@ -121,11 +138,19 @@ class OpenAIClient(LLMBase):
 
         kwargs["stream"] = True
         t_start = time.monotonic()
-        try:
-            stream = self.client.chat.completions.create(**kwargs)
-        except Exception:
-            logger.exception("API流式请求失败 model=%s", model)
-            raise
+
+        for attempt in range(self.max_retries):
+            try:
+                stream = self.client.chat.completions.create(**kwargs)
+                break
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning("API流式请求失败 (attempt=%d/%d): %s, %.1fs后重试", attempt + 1, self.max_retries, e, delay)
+                    time.sleep(delay)
+                else:
+                    logger.exception("API流式请求失败 (final) model=%s", model)
+                    raise
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []

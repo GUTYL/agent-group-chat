@@ -244,3 +244,42 @@ class CliDisplay(DisplayBase):
         self.console.print(
             Panel(msg.content, title=title, title_align="left", border_style=color, padding=(0, 1))
         )
+
+    # ── FreeChat UI methods ─────────────────────────────────
+
+    def show_welcome(self, agents: list[Any], user_name: str = "human") -> None:
+        agents_text = "\n".join(f"  @{a.name} · {a.role}" for a in agents)
+        self.console.print(
+            Panel(
+                f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
+                title="自由群聊",
+                border_style="bright_blue",
+            )
+        )
+
+    def show_help(self, commands: dict[str, str]) -> None:
+        self.console.print("\n[bold]可用命令:[/bold]")
+        for k, v in commands.items():
+            self.console.print(f"  {k:12s} {v}")
+
+    def show_recent_history(self, messages: list[Any], n: int = 10) -> None:
+        recent = messages[-n:]
+        if not recent:
+            self.console.print("[dim]（暂无历史消息）[/dim]")
+            return
+        for msg in recent:
+            if msg.msg_type == MessageType.system:
+                self.console.print(f"[dim]── {msg.content} ──[/dim]")
+            elif msg.msg_type == MessageType.human_input:
+                self.console.print(f"[bold]👤 {msg.sender}:[/bold] {msg.content}")
+            elif msg.msg_type in (MessageType.chat, MessageType.mention):
+                self.console.print(f"{msg.sender}: {msg.content}")
+
+    def show_agents(self, agents: list[Any]) -> None:
+        self.console.print("\n[bold]群聊参与者:[/bold]")
+        for a in agents:
+            goal = getattr(a, "goal", "")
+            self.console.print(f"  @{a.name} · {a.role} · {goal}")
+
+    def show_info(self, text: str) -> None:
+        self.console.print(text)

@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
+from agc import DEFAULT_SESSIONS_DIR
 from agc.core.agent import AgentConfig
 from agc.core.message import Message, MessageType
 from agc.core.session import ChatSession, SessionStore
+from agc.ui.base import DisplayBase
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class FreeChatSession(ChatSession):
         session_id: str | None = None,
         session_store: SessionStore | None = None,
         recent_window: int = 30,
+        use_llm_route: bool = True,
     ):
         super().__init__(
             agents=agents,
@@ -71,15 +73,17 @@ class FreeChatSession(ChatSession):
             workspace_root=workspace_root,
             tools=tools,
             scheduler=scheduler,
+            use_llm_route=use_llm_route,
         )
         self.user_name = user_name
         self.current_topic: str | None = None
         self.session_id = session_id or ""
-        self._session_store = session_store or SessionStore(Path("data/sessions/freechat"))
+        self._session_store = session_store or SessionStore(DEFAULT_SESSIONS_DIR / "freechat")
         self._recent_window = recent_window
         self._system_prompts: dict[str, str] = {}
         self._named = False
         self._total_tokens = 0
+        self._display: DisplayBase | None = None
 
     def run(self) -> None:
         """REPL主循环"""
@@ -107,7 +111,8 @@ class FreeChatSession(ChatSession):
                     else:
                         user_input = input(f"[{self.user_name}] ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    print("\n再见！")
+                    if self._display:
+                        self._display.show_info("\n再见！")
                     logger.info("自由群聊结束 reason=interrupt session_id=%s", self.session_id)
                     break
 
@@ -117,7 +122,8 @@ class FreeChatSession(ChatSession):
                 if user_input.startswith("/"):
                     cmd_result = self._handle_command(user_input)
                     if cmd_result == "quit":
-                        print("再见！")
+                        if self._display:
+                            self._display.show_info("再见！")
                         logger.info("自由群聊结束 reason=quit session_id=%s", self.session_id)
                         break
                     continue
@@ -161,23 +167,10 @@ class FreeChatSession(ChatSession):
                 logger.info("空会话已删除 session_id=%s", self.session_id)
 
     def _show_welcome(self) -> None:
-        """显示欢迎信息"""
-        try:
-            from rich.console import Console
-            from rich.panel import Panel
-
-            console = Console()
-            agents_text = "\n".join(f"  @{a.name} · {a.role}" for a in self.agents)
-            console.print(
-                Panel(
-                    f"群聊已开始！输入消息参与讨论。\n\n[bold]参与者:[/bold]\n{agents_text}\n\n[dim]/help 查看命令 | /quit 退出[/dim]",
-                    title="自由群聊",
-                    border_style="bright_blue",
-                )
-            )
-        except ImportError:
-            print(f"\n群聊已开始！参与者: {', '.join(f'@{a.name}' for a in self.agents)}")
-            print("输入消息参与讨论。/help 查看命令 | /quit 退出\n")
+        if self._display:
+            self._display.show_welcome(self.agents, self.user_name)
+        else:
+            logger.info("群聊开始 agents=%d", len(self.agents))
 
     def _build_system_prompts(self) -> None:
         """为每个agent构建系统提示"""
@@ -298,62 +291,21 @@ class FreeChatSession(ChatSession):
             self._emit_system("会话历史已清空")
             return None
 
-        try:
-            from rich.console import Console
-
-            console = Console()
-            console.print(f"[yellow]未知命令: {cmd}[/yellow]  输入 /help 查看帮助")
-        except ImportError:
-            print(f"未知命令: {cmd}  输入 /help 查看帮助")
+        if self._display:
+            self._display.show_info(f"[yellow]未知命令: {cmd}[/yellow]  输入 /help 查看帮助")
         return None
 
     def _show_help(self) -> None:
-        try:
-            from rich.console import Console
-
-            console = Console()
-            console.print("\n[bold]可用命令:[/bold]")
-            for k, v in SLASH_COMMANDS.items():
-                console.print(f"  {k:12s} {v}")
-        except ImportError:
-            print("\n可用命令:")
-            for k, v in SLASH_COMMANDS.items():
-                print(f"  {k:12s} {v}")
+        if self._display:
+            self._display.show_help(SLASH_COMMANDS)
 
     def _show_recent_history(self, n: int = 10) -> None:
-        """显示最近n条消息"""
-        recent = self.history[-n:]
-        if not recent:
-            print("（暂无历史消息）")
-            return
-        try:
-            from rich.console import Console
-
-            console = Console()
-            for msg in recent:
-                if msg.msg_type == MessageType.system:
-                    console.print(f"[dim]── {msg.content} ──[/dim]")
-                elif msg.msg_type == MessageType.human_input:
-                    console.print(f"[bold]👤 {msg.sender}:[/bold] {msg.content}")
-                elif msg.msg_type in (MessageType.chat, MessageType.mention):
-                    console.print(f"{msg.sender}: {msg.content}")
-        except ImportError:
-            for msg in recent:
-                print(msg.format_display())
+        if self._display:
+            self._display.show_recent_history(self.history, n)
 
     def _show_agents(self) -> None:
-        """显示群中的agent列表"""
-        try:
-            from rich.console import Console
-
-            console = Console()
-            console.print("\n[bold]群聊参与者:[/bold]")
-            for a in self.agents:
-                console.print(f"  @{a.name} · {a.role} · {a.goal}")
-        except ImportError:
-            print("\n群聊参与者:")
-            for a in self.agents:
-                print(f"  @{a.name} · {a.role}")
+        if self._display:
+            self._display.show_agents(self.agents)
 
     def _try_name_session(self, user_input: str) -> None:
         """尝试用LLM给会话命名"""
@@ -392,7 +344,7 @@ class FreeChatSession(ChatSession):
     def _save_session(self) -> None:
         """保存会话（在退出时调用）"""
         if self.session_id and self.history:
-            unsaved = [m for m in self.history if not getattr(m, "_saved", False)]
+            unsaved = [m for m in self.history if not m.metadata.get("_saved", False)]
             if unsaved:
                 self._session_store.append(self.session_id, unsaved)
                 for m in unsaved:

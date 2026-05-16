@@ -39,3 +39,18 @@ class DisplayBase(ABC):
 
     def print_result(self, result: Any) -> None:
         """打印群聊结束结果（可选实现）"""
+
+    def show_welcome(self, agents: list[Any], user_name: str = "human") -> None:
+        """显示群聊欢迎信息（可选实现）"""
+
+    def show_help(self, commands: dict[str, str]) -> None:
+        """显示帮助信息（可选实现）"""
+
+    def show_recent_history(self, messages: list[Any], n: int = 10) -> None:
+        """显示最近消息历史（可选实现）"""
+
+    def show_agents(self, agents: list[Any]) -> None:
+        """显示 agent 列表（可选实现）"""
+
+    def show_info(self, text: str) -> None:
+        """显示通用信息（可选实现）"""

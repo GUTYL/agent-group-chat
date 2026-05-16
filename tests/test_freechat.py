@@ -1,8 +1,11 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 from agc.core.agent import AgentConfig
 from agc.core.freechat import FreeChatSession
 from agc.core.message import Message, MessageType
+from agc.ui.base import DisplayBase
 
 
 @pytest.fixture(autouse=True)
@@ -50,11 +53,12 @@ def test_handle_command_topic_no_args():
     session._handle_command("/topic")
 
 
-def test_handle_command_agents(capsys):
+def test_handle_command_agents():
     session = FreeChatSession(agents=_make_agents())
+    mock_display = MagicMock(spec=DisplayBase)
+    session._display = mock_display
     session._handle_command("/agents")
-    captured = capsys.readouterr()
-    assert "researcher" in captured.out or "研究员" in captured.out
+    mock_display.show_agents.assert_called_once_with(session.agents)
 
 
 def test_create_user_message():

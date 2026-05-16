@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from agc import DEFAULT_WORKSPACES_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,8 +84,14 @@ class Workspace:
         return f"📂 {subdir or '/'} ({len(entries)} 项):\n" + "\n".join(entries)
 
     def run_code(self, command: str, timeout: int = 30) -> str:
-        """在工作空间中执行命令（安全沙箱）"""
-        logger.info(f"[{self.owner}] 执行命令: {command}")
+        """在工作空间中执行命令。
+
+        安全限制：timeout 30s，工作空间路径隔离。
+        注意：Agent 可执行任意命令，仅路径限制防止逃出工作空间。
+        shell=True 是设计选择（支持管道、重定向等语法），
+        生产环境请配合容器/沙箱使用。
+        """
+        logger.info("[%s] 执行命令: %s", self.owner, command)
         try:
             result = subprocess.run(
                 command,
@@ -127,7 +135,7 @@ class Workspace:
 class WorkspaceManager:
     """管理所有Agent的工作空间"""
 
-    def __init__(self, root: str | Path = "./data/workspaces"):
+    def __init__(self, root: str | Path = str(DEFAULT_WORKSPACES_DIR)):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._workspaces: dict[str, Workspace] = {}

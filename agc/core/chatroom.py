@@ -69,6 +69,7 @@ class TopicSession(ChatSession):
         workspace_root: str | None = None,
         human: HumanInTheLoop | None = None,
         stream: bool = True,
+        use_llm_route: bool = True,
     ):
         from agc.llm.base import LLMBase
 
@@ -82,6 +83,7 @@ class TopicSession(ChatSession):
             workspace_root=workspace_root,
             tools=tools,
             scheduler=scheduler,
+            use_llm_route=use_llm_route,
         )
         self.config = RoomConfig(
             name=name,
@@ -158,17 +160,17 @@ class TopicSession(ChatSession):
 
     def _reset_state(self) -> None:
         self.history = []
-        self._turn_counts = {a.name: 0 for a in self.config.agents}
+        self._turn_counts = {a.name: 0 for a in self.agents}
         self._system_prompts = {}
 
     def _build_system_prompts(self, topic: str) -> None:
         extra_prompts = self._build_workspace_prompts()
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         time_hint = f"\n\n当前时间: {now}"
-        for agent in self.config.agents:
+        for agent in self.agents:
             self._system_prompts[agent.name] = agent.build_system_prompt(
                 topic,
-                self.config.agents,
+                self.agents,
                 extra=extra_prompts.get(agent.name, "") + time_hint,
             )
 
@@ -181,7 +183,7 @@ class TopicSession(ChatSession):
     def _all_exhausted(self) -> bool:
         return all(
             a.max_turns > 0 and self._turn_counts.get(a.name, 0) >= a.max_turns
-            for a in self.config.agents
+            for a in self.agents
         )
 
     def _process_messages(self, messages: list[Message], speaker_name: str, tokens: int) -> None:
@@ -209,13 +211,13 @@ class TopicSession(ChatSession):
         return False
 
     def _check_termination(self) -> bool:
-        should_stop, reason = self._terminator.should_stop(self.history, self.config.agents)
+        should_stop, reason = self._terminator.should_stop(self.history, self.agents)
         if should_stop:
             self._emit_system(f"讨论结束: {reason}")
         return should_stop
 
     def _hit_hard_limit(self) -> bool:
-        limit = self.config.max_rounds * len(self.config.agents)
+        limit = self.config.max_rounds * len(self.agents)
         if len(self.history) >= limit:
             self._emit_system(f"达到硬性上限 {limit} 轮发言，讨论结束。")
             return True

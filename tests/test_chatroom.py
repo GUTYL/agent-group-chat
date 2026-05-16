@@ -155,7 +155,7 @@ def test_generate_summary_on_error(mock_llm):
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
         agents = _make_agents()
-        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=1, workspace_root=None)
+        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=1, workspace_root=None, use_llm_route=False)
         room.chat("话题")
         summary = room._generate_summary("话题")
         assert "失败" in summary
