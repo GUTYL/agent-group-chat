@@ -1,6 +1,6 @@
 """02 自定义Agent配置示例"""
 
-from agc.core.chatroom import ChatRoom
+from agc.core.chatroom import TopicSession
 from agc.llm import OpenAIClient
 from agc.templates import get_template
 from agc.ui import CliDisplay
@@ -18,7 +18,7 @@ def main():
     architect.system_prompt_extra = "请考虑可扩展性和运维成本。"
 
     llm = OpenAIClient()
-    room = ChatRoom(
+    room = TopicSession(
         name="custom-team",
         agents=[researcher, architect, developer, reviewer],
         llm=llm,
@@ -28,7 +28,7 @@ def main():
 
     display = CliDisplay()
     room.on_message(display.on_message)
-    display.print_header("如何设计一个高并发的消息队列系统？", room.config.agents)
+    display.print_header("如何设计一个高并发的消息队列系统？", room.agents)
 
     result = room.chat("如何设计一个高并发的消息队列系统？需要考虑哪些关键设计决策？")
     display.print_result(result)

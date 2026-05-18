@@ -96,7 +96,13 @@ class OpenAIClient(LLMBase):
             except Exception as e:
                 if attempt < self.max_retries - 1:
                     delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning("API请求失败 (attempt=%d/%d): %s, %.1fs后重试", attempt + 1, self.max_retries, e, delay)
+                    logger.warning(
+                        "API请求失败 (attempt=%d/%d): %s, %.1fs后重试",
+                        attempt + 1,
+                        self.max_retries,
+                        e,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
                     logger.exception("API请求失败 (final) model=%s", model)
@@ -146,7 +152,13 @@ class OpenAIClient(LLMBase):
             except Exception as e:
                 if attempt < self.max_retries - 1:
                     delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning("API流式请求失败 (attempt=%d/%d): %s, %.1fs后重试", attempt + 1, self.max_retries, e, delay)
+                    logger.warning(
+                        "API流式请求失败 (attempt=%d/%d): %s, %.1fs后重试",
+                        attempt + 1,
+                        self.max_retries,
+                        e,
+                        delay,
+                    )
                     time.sleep(delay)
                 else:
                     logger.exception("API流式请求失败 (final) model=%s", model)

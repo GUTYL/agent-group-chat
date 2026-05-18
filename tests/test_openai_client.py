@@ -31,22 +31,22 @@ def test_init_empty_key_raises():
         OpenAIClient()
 
 
-def test_count_tokens_known_model():
-    client = OpenAIClient()
-    count = client.count_tokens("hello world", model="gpt-4o")
-    assert count > 0
-
-
-def test_count_tokens_unknown_model_fallback():
-    client = OpenAIClient()
-    count = client.count_tokens("hello world", model="unknown-model-xyz")
-    assert count > 0
-
-
-def test_count_tokens_default_model():
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4o",
+        "unknown-model-xyz",
+    ],
+)
+def test_count_tokens_positive(model):
     client = OpenAIClient(default_model="gpt-4o")
-    count = client.count_tokens("hello world")
+    count = client.count_tokens(
+        "hello world", model=model if model != "unknown-model-xyz" else model
+    )
     assert count > 0
+
+    count2 = client.count_tokens("hello world")
+    assert count2 > 0
 
 
 def test_build_kwargs_uses_default_model():

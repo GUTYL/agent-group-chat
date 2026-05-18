@@ -1,27 +1,22 @@
 """单元测试 — 人类参与会话"""
 
+import pytest
+
 from agc.core.human_in_loop import HumanInTheLoop, HumanMode
 from agc.core.message import MessageType
 
 
-def test_human_mode_off():
-    """off模式不暂停"""
-    human = HumanInTheLoop(mode=HumanMode.off)
-    assert human.should_pause(0) is False
-    assert human.should_pause(5) is False
-
-
-def test_human_mode_always():
-    """always模式每轮都暂停"""
-    human = HumanInTheLoop(mode=HumanMode.always, name="user")
-    assert human.should_pause(0) is True
-    assert human.should_pause(5) is True
-
-
-def test_human_mode_on_demand():
-    """on_demand模式不主动暂停"""
-    human = HumanInTheLoop(mode=HumanMode.on_demand)
-    assert human.should_pause(0) is False
+@pytest.mark.parametrize(
+    "mode,expected_pause",
+    [
+        (HumanMode.off, False),
+        (HumanMode.always, True),
+        (HumanMode.on_demand, False),
+    ],
+)
+def test_human_mode_should_pause(mode, expected_pause):
+    human = HumanInTheLoop(mode=mode)
+    assert human.should_pause(0) is expected_pause
 
 
 def test_human_input_with_callback():

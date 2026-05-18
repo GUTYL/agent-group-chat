@@ -24,22 +24,13 @@ def _make_agents():
     ]
 
 
-def test_freechat_init():
-    session = FreeChatSession(agents=_make_agents(), user_name="alice")
-    assert session.user_name == "alice"
-    assert session.current_topic is None
-
-
 def test_handle_command_quit():
-    session = FreeChatSession(agents=_make_agents())
-    result = session._handle_command("/quit")
-    assert result == "quit"
-
-
-def test_handle_command_exit():
-    session = FreeChatSession(agents=_make_agents())
-    result = session._handle_command("/exit")
-    assert result == "quit"
+    session = FreeChatSession(agents=_make_agents(), user_name="test_user")
+    assert session.user_name == "test_user"
+    assert session.current_topic is None
+    assert session._handle_command("/quit") == "quit"
+    session2 = FreeChatSession(agents=_make_agents())
+    assert session2._handle_command("/exit") == "quit"
 
 
 def test_handle_command_topic():
@@ -51,6 +42,7 @@ def test_handle_command_topic():
 def test_handle_command_topic_no_args():
     session = FreeChatSession(agents=_make_agents())
     session._handle_command("/topic")
+    assert session.current_topic is None
 
 
 def test_handle_command_agents():

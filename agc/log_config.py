@@ -9,10 +9,6 @@ from pathlib import Path
 _LOG_FILE: Path | None = None
 
 
-def get_log_file() -> Path | None:
-    return _LOG_FILE
-
-
 def setup_logging(
     session_type: str,
     session_id: str = "",
@@ -30,7 +26,11 @@ def setup_logging(
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
-    safe_id = session_id.replace("/", "_").replace(" ", "_") if session_id else datetime.now().strftime("%H%M%S")
+    safe_id = (
+        session_id.replace("/", "_").replace(" ", "_")
+        if session_id
+        else datetime.now().strftime("%H%M%S")
+    )
     log_file = log_path / f"{session_type}_{safe_id}.log"
 
     formatter = logging.Formatter(

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from agc import DEFAULT_SESSIONS_DIR, DEFAULT_WORKSPACES_DIR
 from agc.core.agent import AgentConfig
-from agc.core.chatroom import ChatRoom
+from agc.core.chatroom import TopicSession
 from agc.core.freechat import FreeChatSession
 from agc.core.human_in_loop import HumanInTheLoop, HumanMode
 from agc.core.session import SessionStore
@@ -66,7 +66,7 @@ def _build_agents(config: dict) -> list[AgentConfig]:
 def _setup_tools(tools_str: str | None, search_provider: str) -> list[str]:
     """初始化搜索工具（如果显式指定）
 
-    注意：web_fetch, workspace, memory 工具由 ChatRoom 自动注册，
+    注意：web_fetch, workspace, memory 工具由 TopicSession 自动注册，
     这里只处理搜索工具的显式指定和后端注册。
     """
     tool_names = [t.strip() for t in tools_str.split(",") if t.strip()] if tools_str else []
@@ -160,11 +160,18 @@ def topic(
     verbose: bool = typer.Option(True, "--verbose/--quiet", help="是否显示详细过程"),
     log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
     log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
-    no_llm_route: bool = typer.Option(False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"),
+    no_llm_route: bool = typer.Option(
+        False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"
+    ),
 ):
     """启动一个多Agent群聊讨论"""
 
-    setup_logging("topic", f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{_safe_log_id(topic)}", log_dir=log_dir, level=log_level)
+    setup_logging(
+        "topic",
+        f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{_safe_log_id(topic)}",
+        log_dir=log_dir,
+        level=log_level,
+    )
 
     # 初始化工具（搜索后端等显式指定项）
     tool_names = _setup_tools(tools, search)
@@ -199,7 +206,7 @@ def topic(
     human_loop = HumanInTheLoop.create(mode_str=human, name=human_name)
 
     # 创建群聊
-    room = ChatRoom(
+    room = TopicSession(
         name="group-chat",
         agents=agents,
         scheduler=scheduler,
@@ -247,7 +254,9 @@ def room(
     user_name: str = typer.Option("human", "--user-name", help="人类用户在群聊中的名字"),
     log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
     log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
-    no_llm_route: bool = typer.Option(False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"),
+    no_llm_route: bool = typer.Option(
+        False, "--no-llm-route", help="禁用LLM智能路由，仅用关键词+轮询"
+    ),
 ):
     """启动IM风格自由群聊"""
 

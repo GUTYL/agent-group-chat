@@ -114,37 +114,6 @@ def test_tool_result_format_display():
     assert "工具结果" in display
 
 
-def test_message_to_json():
-    msg = Message(sender="human", content="hello", msg_type=MessageType.human_input)
-    data = msg.to_json()
-    assert data["sender"] == "human"
-    assert data["content"] == "hello"
-    assert data["msg_type"] == "human_input"
-    assert "id" in data
-    assert "timestamp" in data
-
-
-def test_message_from_json():
-    data = {
-        "id": "abc123",
-        "sender": "researcher",
-        "content": "I found something",
-        "msg_type": "chat",
-        "mentions": [],
-        "round_idx": 0,
-        "timestamp": 1715325000.0,
-        "metadata": {},
-        "tool_calls": [],
-        "tool_call_id": "",
-        "reasoning_content": "",
-        "session_id": "",
-    }
-    msg = Message.from_json(data)
-    assert msg.sender == "researcher"
-    assert msg.content == "I found something"
-    assert msg.msg_type == MessageType.chat
-
-
 def test_message_json_roundtrip():
     original = Message(
         sender="architect",

@@ -1,11 +1,11 @@
-"""单元测试 — TopicSession (ChatRoom)"""
+"""单元测试 — TopicSession"""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agc.core.agent import AgentConfig
-from agc.core.chatroom import ChatResult, ChatRoom, TopicSession
+from agc.core.chatroom import ChatResult, TopicSession
 from agc.core.message import Message, MessageType
 
 
@@ -47,13 +47,15 @@ def patched_room(mock_llm):
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
         agents = _make_agents()
-        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=5, workspace_root=None)
+        room = TopicSession(
+            name="test", agents=agents, llm=mock_llm, max_rounds=5, workspace_root=None
+        )
         yield room
 
 
 def test_topic_session_init():
     agents = _make_agents()
-    room = ChatRoom(name="test", agents=agents, max_rounds=5, workspace_root=None)
+    room = TopicSession(name="test", agents=agents, max_rounds=5, workspace_root=None)
     assert room.config.name == "test"
     assert room.config.max_rounds == 5
     assert len(room.agents) == 2
@@ -79,7 +81,9 @@ def test_topic_session_chat_respects_max_rounds(mock_llm):
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
         agents = _make_agents()
-        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=2, workspace_root=None)
+        room = TopicSession(
+            name="test", agents=agents, llm=mock_llm, max_rounds=2, workspace_root=None
+        )
         result = room.chat("话题")
     assert result.rounds <= 2
 
@@ -100,7 +104,9 @@ def test_speaker_exhausted_allows_unlimited(mock_llm):
 
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
-        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=5, workspace_root=None)
+        room = TopicSession(
+            name="test", agents=agents, llm=mock_llm, max_rounds=5, workspace_root=None
+        )
         room.chat("话题")
     assert call_count > 1
 
@@ -114,30 +120,26 @@ def test_turn_counts_include_mention_messages():
         mentions=["architect"],
         round_idx=0,
     )
-    room = ChatRoom(name="test", agents=agents, max_rounds=5, workspace_root=None)
+    room = TopicSession(name="test", agents=agents, max_rounds=5, workspace_root=None)
     room._turn_counts["researcher"] = 0
     room._process_messages([msg], "researcher", 0)
     assert room._turn_counts["researcher"] == 1
 
 
-def test_all_exhausted_returns_true():
+@pytest.mark.parametrize(
+    "max_turns,counts,expected",
+    [
+        ([1, 1], {"researcher": 1, "architect": 1}, True),
+        ([1, 0], {"researcher": 1, "architect": 0}, False),
+    ],
+)
+def test_all_exhausted(max_turns, counts, expected):
     agents = _make_agents()
-    agents[0].max_turns = 1
-    agents[1].max_turns = 1
-    room = ChatRoom(name="test", agents=agents, max_rounds=5, workspace_root=None)
-    room._turn_counts["researcher"] = 1
-    room._turn_counts["architect"] = 1
-    assert room._all_exhausted() is True
-
-
-def test_all_exhausted_returns_false_with_unlimited():
-    agents = _make_agents()
-    agents[0].max_turns = 1
-    agents[1].max_turns = 0
-    room = ChatRoom(name="test", agents=agents, max_rounds=5, workspace_root=None)
-    room._turn_counts["researcher"] = 1
-    room._turn_counts["architect"] = 0
-    assert room._all_exhausted() is False
+    agents[0].max_turns = max_turns[0]
+    agents[1].max_turns = max_turns[1]
+    room = TopicSession(name="test", agents=agents, max_rounds=5, workspace_root=None)
+    room._turn_counts.update(counts)
+    assert room._all_exhausted() is expected
 
 
 def test_generate_summary_on_error(mock_llm):
@@ -155,11 +157,14 @@ def test_generate_summary_on_error(mock_llm):
     with patch("agc.core.session.OpenAIClient") as mock_client_cls:
         mock_client_cls.return_value = mock_llm
         agents = _make_agents()
-        room = ChatRoom(name="test", agents=agents, llm=mock_llm, max_rounds=1, workspace_root=None, use_llm_route=False)
+        room = TopicSession(
+            name="test",
+            agents=agents,
+            llm=mock_llm,
+            max_rounds=1,
+            workspace_root=None,
+            use_llm_route=False,
+        )
         room.chat("话题")
         summary = room._generate_summary("话题")
         assert "失败" in summary
-
-
-def test_chatroom_alias():
-    assert ChatRoom is TopicSession

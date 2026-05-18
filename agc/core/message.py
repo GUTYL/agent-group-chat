@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 class MessageType(StrEnum):
     chat = "chat"
     mention = "mention"
-    broadcast = "broadcast"
     system = "system"
     summary = "summary"
     tool_call = "tool_call"
@@ -35,7 +34,6 @@ class Message(BaseModel):
     tool_calls: list[dict[str, Any]] = []
     tool_call_id: str = ""
     reasoning_content: str = ""
-    session_id: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return self.model_dump(mode="python")

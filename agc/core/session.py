@@ -101,7 +101,9 @@ class ChatSession(ABC):
                 )
         return clients
 
-    def _init_scheduler(self, name: str, agents: list[AgentConfig], use_llm_route: bool = True) -> SchedulerBase:
+    def _init_scheduler(
+        self, name: str, agents: list[AgentConfig], use_llm_route: bool = True
+    ) -> SchedulerBase:
         if name == "round_robin":
             return RoundRobinScheduler(agents)
         if name == "hybrid":

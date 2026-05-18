@@ -26,16 +26,13 @@ SUMMARY_RECENT_MSGS = 20
 
 
 class RoomConfig(BaseModel):
-    """群聊房间配置"""
+    """群聊房间配置 — 仅存活的字段"""
 
     name: str
     agents: list[AgentConfig]
     scheduler: str = "hybrid"
     max_rounds: int = 20
-    terminator: str = "consensus"
-    human_in_loop: bool = False
     context_window: int = 8000
-    summary_on_overflow: bool = True
     verbose: bool = True
     base_url: str | None = None
     api_key: str | None = None
@@ -115,7 +112,12 @@ class TopicSession(ChatSession):
         self._build_system_prompts(topic)
         self._emit_system(f"讨论话题: {topic}")
 
-        logger.info("话题讨论开始 topic=%s agents=%d max_rounds=%d", topic, len(self.agents), self._max_rounds)
+        logger.info(
+            "话题讨论开始 topic=%s agents=%d max_rounds=%d",
+            topic,
+            len(self.agents),
+            self._max_rounds,
+        )
         round_idx = 0
         total_tokens = 0
 
@@ -124,7 +126,11 @@ class TopicSession(ChatSession):
             if self._speaker_exhausted(speaker):
                 if self._all_exhausted():
                     self._emit_system("所有参与者已达到发言上限，讨论结束。")
-                    logger.info("话题讨论结束 reason=all_exhausted rounds=%d tokens=%d", round_idx, total_tokens)
+                    logger.info(
+                        "话题讨论结束 reason=all_exhausted rounds=%d tokens=%d",
+                        round_idx,
+                        total_tokens,
+                    )
                     break
                 round_idx += 1
                 continue
@@ -135,17 +141,18 @@ class TopicSession(ChatSession):
             total_tokens += tokens
 
             if self._handle_human_pause(round_idx, speaker.name):
-                logger.info("话题讨论结束 reason=human_stop rounds=%d tokens=%d", round_idx, total_tokens)
+                logger.info(
+                    "话题讨论结束 reason=human_stop rounds=%d tokens=%d", round_idx, total_tokens
+                )
                 break
 
             if self._check_termination():
-                logger.info("话题讨论结束 reason=terminator rounds=%d tokens=%d", round_idx, total_tokens)
+                logger.info(
+                    "话题讨论结束 reason=terminator rounds=%d tokens=%d", round_idx, total_tokens
+                )
                 break
 
             round_idx += 1
-            if self._hit_hard_limit():
-                logger.info("话题讨论结束 reason=hard_limit rounds=%d tokens=%d", round_idx, total_tokens)
-                break
 
         summary = self._generate_summary(topic)
         logger.info("话题讨论完成 summary_len=%d total_tokens=%d", len(summary), total_tokens)
@@ -182,8 +189,7 @@ class TopicSession(ChatSession):
 
     def _all_exhausted(self) -> bool:
         return all(
-            a.max_turns > 0 and self._turn_counts.get(a.name, 0) >= a.max_turns
-            for a in self.agents
+            a.max_turns > 0 and self._turn_counts.get(a.name, 0) >= a.max_turns for a in self.agents
         )
 
     def _process_messages(self, messages: list[Message], speaker_name: str, tokens: int) -> None:
@@ -215,13 +221,6 @@ class TopicSession(ChatSession):
         if should_stop:
             self._emit_system(f"讨论结束: {reason}")
         return should_stop
-
-    def _hit_hard_limit(self) -> bool:
-        limit = self.config.max_rounds * len(self.agents)
-        if len(self.history) >= limit:
-            self._emit_system(f"达到硬性上限 {limit} 轮发言，讨论结束。")
-            return True
-        return False
 
     # ── Response generation ────────────────────────────────
 
@@ -301,6 +300,3 @@ class TopicSession(ChatSession):
         except Exception as e:
             logger.warning(f"总结生成失败: {e}")
             return "（总结生成失败）"
-
-
-ChatRoom = TopicSession

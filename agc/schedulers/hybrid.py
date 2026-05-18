@@ -42,15 +42,12 @@ class HybridScheduler(SchedulerBase):
         super().__init__(agents)
         self.llm = llm
         self.use_llm_router = use_llm_router
-        self._round_idx = 0
 
     def next_speaker(
         self,
         history: list[Message],
         round_idx: int,
     ) -> AgentConfig:
-        self._round_idx = round_idx
-
         # 1. @mention 优先
         if history and history[-1].has_mentions:
             mentioned = history[-1].mentions[0]  # 取第一个@的人

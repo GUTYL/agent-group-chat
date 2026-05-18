@@ -1,5 +1,7 @@
 """单元测试 — 网页抓取工具"""
 
+import pytest
+
 from agc.tools.base import get_tool
 from agc.tools.web_fetch import (
     WebFetchTool,
@@ -14,7 +16,6 @@ from agc.tools.web_fetch import (
 
 
 def test_validate_url():
-    """URL校验"""
     ok, _ = _validate_url("https://example.com")
     assert ok
 
@@ -26,25 +27,28 @@ def test_validate_url():
     assert not ok
 
 
-def test_is_private_ip():
-    """私有/内网IP检测"""
-    assert _is_private_ip("10.0.0.1") is True
-    assert _is_private_ip("10.255.255.255") is True
-    assert _is_private_ip("172.16.0.1") is True
-    assert _is_private_ip("172.31.255.255") is True
-    assert _is_private_ip("192.168.1.1") is True
-    assert _is_private_ip("127.0.0.1") is True
-    assert _is_private_ip("0.0.0.0") is True
-    assert _is_private_ip("169.254.1.1") is True
-    assert _is_private_ip("::1") is True
-    assert _is_private_ip("fc00::1") is True
-    assert _is_private_ip("fe80::1") is True
-    # 公网IP
-    assert _is_private_ip("8.8.8.8") is False
-    assert _is_private_ip("1.1.1.1") is False
-    assert _is_private_ip("93.184.216.34") is False
-    # 无效IP
-    assert _is_private_ip("not-an-ip") is False
+@pytest.mark.parametrize(
+    "ip,expected",
+    [
+        ("10.0.0.1", True),
+        ("10.255.255.255", True),
+        ("172.16.0.1", True),
+        ("172.31.255.255", True),
+        ("192.168.1.1", True),
+        ("127.0.0.1", True),
+        ("0.0.0.0", True),
+        ("169.254.1.1", True),
+        ("::1", True),
+        ("fc00::1", True),
+        ("fe80::1", True),
+        ("8.8.8.8", False),
+        ("1.1.1.1", False),
+        ("93.184.216.34", False),
+        ("not-an-ip", False),
+    ],
+)
+def test_is_private_ip(ip, expected):
+    assert _is_private_ip(ip) is expected
 
 
 def test_validate_url_safe():

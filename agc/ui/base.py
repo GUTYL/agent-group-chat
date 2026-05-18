@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class DisplayBase(ABC):
     """所有 UI 的统一接口
 
-    ChatRoom 通过三个核心回调驱动 Display:
+    TopicSession 通过三个核心回调驱动 Display:
     - begin_stream: 某 agent 开始流式输出
     - on_chunk: 流式文本片段
     - on_message: 完整消息（chat/tool_call/tool_result/system/human_input）
