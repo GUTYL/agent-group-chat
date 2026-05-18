@@ -6,4 +6,4 @@ TopicSession uses LLM summarization to compress older messages; FreeChatSession 
 
 1. **Unified summarization for both** — rejected: summarization adds latency and LLM cost that harms the real-time feel of FreeChatSession. IM conversations are shorter-lived and benefit from the full verbatim context of recent messages.
 2. **Unified sliding window for both** — rejected: topic discussions can span dozens of rounds. A sliding window would silently drop critical context (early agreements, voted-out options) that summarization preserves.
-3. **Split strategies (chosen)**: TopicSession gets smart compression, FreeChatSession gets simple recency. FreeChatSession adds a hard memory cap (500 messages) with cold-storage archival to prevent unbounded memory growth.
+3. **Split strategies (chosen)**: TopicSession gets smart compression, FreeChatSession gets simple recency. A hard memory cap (500 messages) with cold-storage archival is planned for FreeChatSession to prevent unbounded memory growth (not yet implemented).

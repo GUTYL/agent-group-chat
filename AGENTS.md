@@ -4,7 +4,7 @@
 
 ```bash
 uv sync --extra dev           # install all deps (including test + prompt_toolkit + ruff)
-uv run pytest tests/ -v       # run all 96 tests
+uv run pytest tests/ -v       # run all 129 tests
 uv run pytest tests/test_message.py::test_message_to_json -v  # single test
 uv run ruff check             # lint
 uv run ruff format            # auto-format
@@ -37,15 +37,18 @@ cli.py (typer)
 
 **Important:** `ChatSession` stores agents as `self.agents` (plain list). TopicSession adds `self.config` (RoomConfig) separately. When writing code that works across both modes, use `self.agents`, not `self.config.agents`.
 
+**Path constants:** `DEFAULT_DATA_DIR`, `DEFAULT_SESSIONS_DIR`, `DEFAULT_WORKSPACES_DIR` defined in `agc/__init__.py`. Import from there, never hardcode paths.
+
 ## Display
 
 `CliDisplay` (always used):
-- Three callbacks: `begin_stream(name, role, model)`, `on_chunk(text)`, `on_message(Message)`
+- Callbacks: `begin_stream(name, role, model)`, `on_chunk(text)`, `on_message(Message)`, `on_reasoning_chunk(text)`, `flush_tool_status()`
 - **Streaming**: `begin_stream` starts a Rich `Live` Panel (border visible from start, content grows). One `Live` instance per agent turn, **never stop/restart during tool calls** — only update content via `_update_live()`. This eliminates alt-screen switch flickering.
-- **Tool calls**: `_tool_status` set → `_update_live()` appends tool status to existing Panel. `_stop_live()` is NOT called.
+- **Tool calls**: `_action_log` collects tool status entries → `_update_live()` appends them to existing Panel. `_stop_live()` is NOT called.
 - **Final message**: streaming agent → `_stop_live()`, Panel stays visible (`transient=False`). Non-streaming → `_render_panel()` directly.
 - `_render_panel(sender, content)` is a shared helper used by `_print_chat` and the streaming final-message path.
-- Only failed tools (`tool_success: false`) shown via `_tool_status`.
+- Only failed tools (`tool_success: false`) shown via `_action_log`.
+- **FreeChat methods**: `show_welcome()`, `show_help()`, `show_recent_history()`, `show_agents()`, `show_info()` added to `DisplayBase` ABC. FreeChatSession routes all UI through Display, never raw print().
 
 ## Scheduling
 
@@ -55,7 +58,7 @@ cli.py (typer)
 ### FreeChatSession (plan_responses)
 @mention (all mentioned) → "大家"/@all (all) → keyword route → LLM route → first agent (fallback)
 
-LLM routing logs to stdout: `🤖 LLM路由 → @name` on success, `⚡ LLM路由未命中` on miss, `⚡ LLM路由调用失败: ...` on error. Reads `reasoning_content` as fallback for thinking models.
+LLM routing results are logged via `logger`: success logs `调度决策 method=llm_route target=...`, miss logs `调度决策 method=llm_route result=miss`, errors log at WARNING level. Reads `reasoning_content` as fallback for thinking models. Use `--no-llm-route` to disable.
 
 ## DeepSeek / thinking model requirements
 
@@ -68,6 +71,8 @@ LLM routing logs to stdout: `🤖 LLM路由 → @name` on success, `⚡ LLM路�
 
 - `MAX_TOOL_ROUNDS = 8` — tool call loop limit (in both chatroom.py and freechat.py)
 - `MAX_TOOL_RESULT_LENGTH = 2000` — truncated before storage
+- `DEFAULT_TIMEOUT = 120.0` — LLM API timeout in seconds
+- `DEFAULT_MAX_RETRIES = 3` — LLM API retry count (exponential backoff)
 - `_emitted` metadata flag — prevents duplicate tool message display during streaming
 - `_DEFAULT_MAX_CHARS = 50000` — web_fetch truncation limit
 - `_MAX_REDIRECTS = 5` — web_fetch redirect limit
@@ -76,7 +81,7 @@ LLM routing logs to stdout: `🤖 LLM路由 → @name` on success, `⚡ LLM路�
 
 - **FreeChatSession** → `data/sessions/freechat/{session_id}.jsonl` (JSONL per session)
 - **TopicSession** → `data/sessions/topics/{timestamp}_{topic}.json` (summary only, auto-saved after `chat()` completes)
-- `SessionStore` base dir defaults to `data/sessions/`; CLI explicitly passes subdirectory paths
+- `SessionStore` base dir defaults to `DEFAULT_SESSIONS_DIR` (`data/sessions/`); CLI explicitly passes subdirectory paths
 
 ## Tool system
 
@@ -84,7 +89,7 @@ LLM routing logs to stdout: `🤖 LLM路由 → @name` on success, `⚡ LLM路�
 - **web_fetch**: Jina Reader (`r.jina.ai`) as primary extractor (no API key needed, falls back on 429). readability-lxml as local fallback. SSRF protection via `_validate_url_safe()` — blocks private/internal IPs (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, etc.)
 - **Auto-registered tools:** `web_fetch`, `web_search`, workspace tools (`write_file`, `read_file`, `list_files`, `run_code`, `save_memory`, `recall_memory`, `list_memories`, `delete_memory`)
 - **All tools injected by default** — agents with `tools=[]` get every registered tool schema via `_resolve_tools()`
-- Workspace always enabled at `./data/workspaces/`
+- Workspace always enabled at `DEFAULT_WORKSPACES_DIR` (`data/workspaces/`)
 
 ## web_fetch gotchas
 
@@ -107,11 +112,13 @@ LLM routing logs to stdout: `🤖 LLM路由 → @name` on success, `⚡ LLM路�
 ```
 agc topic "topic"             # topic-driven discussion (TopicSession)
 agc topic "topic" -c cfg.yaml # YAML config
+agc topic "topic" --no-llm-route  # disable LLM router
 agc room                      # IM-style free group chat (FreeChatSession)
 agc room --resume <prefix>    # resume saved session (fuzzy prefix match)
 agc room --list               # list all saved sessions
-agc agents                    # list agent templates
+agc templates                 # list agent templates
 agc tools-list                # list registered tools
+agc --version                 # show version
 ```
 
 `.env` loaded by `cli.py:load_dotenv()`. Relevant vars: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
