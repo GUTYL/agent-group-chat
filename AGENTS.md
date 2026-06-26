@@ -4,7 +4,7 @@
 
 ```bash
 uv sync --extra dev           # install all deps (including test + prompt_toolkit + ruff)
-uv run pytest tests/ -v       # run all 129 tests
+uv run pytest tests/ -v       # run all 137 tests
 uv run pytest tests/test_message.py::test_message_to_json -v  # single test
 uv run ruff check             # lint
 uv run ruff format            # auto-format
@@ -28,9 +28,9 @@ cli.py (typer)
 ```
 
 - **`agc/core/session.py`** — `ChatSession` ABC + `SessionStore` (JSONL persistence, default `data/sessions/`)
-- **`agc/core/chatroom.py`** — `TopicSession(ChatSession)`. Topic-driven discussion with terminators. `ChatRoom = TopicSession` backward-compat alias.
+- **`agc/core/chatroom.py`** — `TopicSession(ChatSession)`. Topic-driven discussion with terminators. Supports `continue_chat()` for follow-up questions after discussion ends.
 - **`agc/core/freechat.py`** — `FreeChatSession(ChatSession)`. IM-style REPL group chat. User inputs anytime, scheduler picks responder(s).
-- **`agc/core/context.py`** — `ContextManager`. `build_messages()` for topic mode (summarization). `build_freechat_context()` for IM mode (sliding window, no summarization). `_adjust_for_tool_pairs()` prevents splitting tool pairs.
+- **`agc/core/context.py`** — `ContextManager`. `build_messages()` for topic mode (summarization). `build_freechat_context()` for IM mode (sliding window + long-conversation summarization when older messages exceed `cold_storage_threshold`). `_adjust_for_tool_pairs()` prevents splitting tool pairs.
 - **`agc/core/message.py`** — `Message` (Pydantic). `to_openai_msg()` handles DeepSeek `reasoning_content`. `to_json()`/`from_json()` for persistence.
 - **`agc/llm/openai_client.py`** — OpenAI SDK wrapper. Streaming + reasoning_content extraction. `FALLBACK_ENCODING = "cl100k_base"`.
 - **`agc/ui/`** — `DisplayBase` ABC → `CliDisplay` (Rich terminal). Live + Panel for streaming.
@@ -69,7 +69,7 @@ LLM routing results are logged via `logger`: success logs `调度决策 method=l
 
 ## Key constants
 
-- `MAX_TOOL_ROUNDS = 8` — tool call loop limit (in both chatroom.py and freechat.py)
+- `MAX_TOOL_ROUNDS = 8` — tool call loop limit (defined in session.py, inherited by both session types)
 - `MAX_TOOL_RESULT_LENGTH = 2000` — truncated before storage
 - `DEFAULT_TIMEOUT = 120.0` — LLM API timeout in seconds
 - `DEFAULT_MAX_RETRIES = 3` — LLM API retry count (exponential backoff)
@@ -103,7 +103,7 @@ LLM routing results are logged via `logger`: success logs `调度决策 method=l
 
 - Requires `prompt_toolkit` for proper CJK input (falls back to `input()` if missing)
 - **Persistence**: sessions saved to `data/sessions/freechat/`. LLM auto-names on first message. Resume with `agc room --resume <name>` (prefix match).
-- **Slash commands**: `/quit`, `/history [N]`, `/agents`, `/topic <text>`, `/clear`, `/help`
+- **Slash commands**: `/quit`, `/history [N]`, `/agents`, `/topic <text>`, `/clear`, `/export [path]`, `/tokens`, `/help`
 - **`/clear`**: deletes session file, creates new one. Only works if `session_id` is set.
 - `_emit_message()` adds to history AND calls display callbacks. Don't append to history separately.
 
@@ -115,7 +115,11 @@ agc topic "topic" -c cfg.yaml # YAML config
 agc topic "topic" --no-llm-route  # disable LLM router
 agc room                      # IM-style free group chat (FreeChatSession)
 agc room --resume <prefix>    # resume saved session (fuzzy prefix match)
+agc room --recent-window 50   # set context window size
 agc room --list               # list all saved sessions
+agc sessions --list           # list all sessions (topics + freechat)
+agc sessions --delete <id>    # delete a session
+agc sessions --rename <old> --to <new>  # rename a session
 agc templates                 # list agent templates
 agc tools-list                # list registered tools
 agc --version                 # show version
@@ -123,11 +127,11 @@ agc --version                 # show version
 
 `.env` loaded by `cli.py:load_dotenv()`. Relevant vars: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
 
-Default agents extracted to `_DEFAULT_AGENTS` dict list in `cli.py`; `_make_default_agents(model, tool_names)` builds `AgentConfig` list from it.
+Default agents built from `agc/templates` module via `_DEFAULT_AGENT_NAMES` in `cli.py`; `_make_default_agents(model, tool_names)` looks up `TEMPLATES` dict and applies model/tool overrides.
 
 ## Context
 
 - Current time injected into system prompt (agent-visible), not displayed as user message
 - TopicSession: `_select_history` summarizes older messages with LLM when over token limit
-- FreeChatSession: `build_freechat_context` uses sliding window (default 30 messages), no summarization
+- FreeChatSession: `build_freechat_context` uses sliding window (default 50 messages), with summarization when older messages exceed `cold_storage_threshold` (default 200)
 - `current_topic` injected as system message when set via `/topic` command

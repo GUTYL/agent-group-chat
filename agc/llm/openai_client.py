@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 import tiktoken
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI, PermissionDeniedError
 
 from .base import LLMBase, LLMResponse
 
@@ -46,6 +46,13 @@ class OpenAIClient(LLMBase):
         client_kwargs["timeout"] = self.timeout
         client_kwargs["max_retries"] = 0
         self.client = OpenAI(**client_kwargs)
+
+    def _is_retryable(self, exc: Exception) -> bool:
+        """判断异常是否值得重试。永久性失败（认证/权限）不重试。"""
+        if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+            logger.error("API认证/权限失败（不可重试）: %s", exc)
+            return False
+        return True
 
     def chat(
         self,
@@ -94,6 +101,8 @@ class OpenAIClient(LLMBase):
                 elapsed = time.monotonic() - t_start
                 break
             except Exception as e:
+                if not self._is_retryable(e):
+                    raise
                 if attempt < self.max_retries - 1:
                     delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                     logger.warning(
@@ -150,6 +159,8 @@ class OpenAIClient(LLMBase):
                 stream = self.client.chat.completions.create(**kwargs)
                 break
             except Exception as e:
+                if not self._is_retryable(e):
+                    raise
                 if attempt < self.max_retries - 1:
                     delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                     logger.warning(

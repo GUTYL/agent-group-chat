@@ -167,9 +167,13 @@ class ChatSession(ABC):
         for cb in self._on_message_callbacks:
             cb(msg)
 
+    def _mentionable_names(self) -> set[str]:
+        """可被 @提及的名字集合。子类可覆盖以加入额外参与者（如人类）。"""
+        return {a.name for a in self.agents}
+
     def _parse_mentions(self, content: str) -> list[str]:
-        agent_names = {a.name for a in self.agents}
-        return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
+        names = self._mentionable_names()
+        return [m for m in re.findall(r"@(\w+)", content) if m in names]
 
     def _create_final_message(self, agent: AgentConfig, response, round_idx: int) -> Message:
         content = response.content.strip()
@@ -240,73 +244,85 @@ class ChatSession(ABC):
 
         Returns:
             (result_messages, total_tokens)
+
+        Raises:
+            KeyboardInterrupt: 用户中断时，已添加到 history 的 partial 消息会回滚
         """
         agent_tools = self._resolve_tools(agent)
         llm = self._llm_clients.get(agent.name, self.llm)
         result_messages: list[Message] = []
         total_tokens = 0
 
-        for tool_round in range(MAX_TOOL_ROUNDS + 1):
-            ctx = self._build_response_context(agent, result_messages)
-            t_start = time.monotonic()
-            logger.info(
-                "LLM调用 agent=%s model=%s msgs=%d tools=%d round=%d",
-                agent.name,
-                agent.model,
-                len(ctx),
-                len(agent_tools),
-                tool_round,
-            )
-            response = llm.chat(
-                messages=ctx,
-                model=agent.model,
-                temperature=agent.temperature,
-                tools=agent_tools or None,
-                on_chunk=self._emit_chunk if self._stream else None,
-                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
-            )
-            elapsed = time.monotonic() - t_start
-            total_tokens += response.total_tokens
-            logger.info(
-                "LLM响应 agent=%s tokens=%d finish=%s elapsed=%.2fs",
-                agent.name,
-                response.total_tokens,
-                response.finish_reason,
-                elapsed,
-            )
+        try:
+            for tool_round in range(MAX_TOOL_ROUNDS + 1):
+                ctx = self._build_response_context(agent, result_messages)
+                t_start = time.monotonic()
+                logger.info(
+                    "LLM调用 agent=%s model=%s msgs=%d tools=%d round=%d",
+                    agent.name,
+                    agent.model,
+                    len(ctx),
+                    len(agent_tools),
+                    tool_round,
+                )
+                response = llm.chat(
+                    messages=ctx,
+                    model=agent.model,
+                    temperature=agent.temperature,
+                    tools=agent_tools or None,
+                    on_chunk=self._emit_chunk if self._stream else None,
+                    on_reasoning_chunk=self._emit_reasoning if self._stream else None,
+                )
+                elapsed = time.monotonic() - t_start
+                total_tokens += response.total_tokens
+                logger.info(
+                    "LLM响应 agent=%s tokens=%d finish=%s elapsed=%.2fs",
+                    agent.name,
+                    response.total_tokens,
+                    response.finish_reason,
+                    elapsed,
+                )
 
-            if response.has_tool_calls:
-                msgs = self._create_tool_messages(agent, response, self._current_round())
-                result_messages.extend(msgs)
-                if emit_tool_to_history:
+                if response.has_tool_calls:
+                    msgs = self._create_tool_messages(agent, response, self._current_round())
+                    result_messages.extend(msgs)
+                    if emit_tool_to_history:
+                        for msg in msgs:
+                            self.history.append(msg)
                     for msg in msgs:
-                        self.history.append(msg)
-                for msg in msgs:
-                    self._notify_display(msg)
-                    if msg.msg_type == MessageType.tool_result:
-                        tool_name = msg.metadata.get("tool_name", "?")
-                        tool_ok = msg.metadata.get("tool_success", False)
-                        logger.info(
-                            "工具执行 agent=%s tool=%s success=%s",
-                            agent.name,
-                            tool_name,
-                            tool_ok,
-                        )
-                self._emit_tool_batch()
-                continue
+                        self._notify_display(msg)
+                        if msg.msg_type == MessageType.tool_result:
+                            tool_name = msg.metadata.get("tool_name", "?")
+                            tool_ok = msg.metadata.get("tool_success", False)
+                            logger.info(
+                                "工具执行 agent=%s tool=%s success=%s",
+                                agent.name,
+                                tool_name,
+                                tool_ok,
+                            )
+                    self._emit_tool_batch()
+                    continue
 
-            final_msg = self._create_final_message(agent, response, self._current_round())
-            if emit_final:
-                self._emit_message(final_msg)
-            result_messages.append(final_msg)
-            break
-        else:
-            logger.warning(
-                "工具循环超限 agent=%s max_rounds=%d",
-                agent.name,
-                MAX_TOOL_ROUNDS,
-            )
-            self._force_text_response_fallback(agent, result_messages, emit_final)
+                final_msg = self._create_final_message(agent, response, self._current_round())
+                if emit_final:
+                    self._emit_message(final_msg)
+                result_messages.append(final_msg)
+                break
+            else:
+                logger.warning(
+                    "工具循环超限 agent=%s max_rounds=%d",
+                    agent.name,
+                    MAX_TOOL_ROUNDS,
+                )
+                self._force_text_response_fallback(agent, result_messages, emit_final)
+        except KeyboardInterrupt:
+            # 回滚已添加到 history 的 partial 消息
+            if emit_tool_to_history:
+                for msg in reversed(result_messages):
+                    if msg in self.history:
+                        self.history.remove(msg)
+            logger.warning("用户中断 agent=%s, 已回滚 partial 消息", agent.name)
+            raise
 
         return result_messages, total_tokens
 
@@ -316,11 +332,27 @@ class ChatSession(ABC):
     ) -> list[dict[str, Any]]:
         """构建 LLM 请求上下文。子类实现。"""
 
-    @abstractmethod
     def _force_text_response_fallback(
         self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
     ) -> None:
-        """工具循环超限时强制生成文本回复。子类实现。"""
+        """工具循环超限时强制生成文本回复（无工具调用）。"""
+        try:
+            ctx = self._build_response_context(agent, result_messages)
+            llm = self._llm_clients.get(agent.name, self.llm)
+            response = llm.chat(
+                messages=ctx,
+                model=agent.model,
+                temperature=agent.temperature,
+                tools=None,
+                on_chunk=self._emit_chunk if self._stream else None,
+                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
+            )
+            final_msg = self._create_final_message(agent, response, self._current_round())
+            if emit_final:
+                self._emit_message(final_msg)
+            result_messages.append(final_msg)
+        except Exception as e:
+            logger.warning(f"强制无工具回复失败: {e}")
 
     def _emit_message(self, msg: Message) -> None:
         """发射消息到所有回调，同时加入 history。
@@ -430,9 +462,13 @@ class SessionStore:
 
     def append(self, session_id: str, messages: list[Message]) -> None:
         path = self._resolve_path(session_id)
-        with open(path, "a", encoding="utf-8") as f:
-            for msg in messages:
-                f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                for msg in messages:
+                    f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
+        except OSError as e:
+            logger.error("会话写入失败 session=%s: %s", session_id, e)
+            raise
 
     def load_session(self, session_id: str) -> list[Message]:
         path = self._resolve_path(session_id)
@@ -440,12 +476,15 @@ class SessionStore:
             raise FileNotFoundError(f"会话不存在: {session_id}")
         messages = []
         with open(path, encoding="utf-8") as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
-                messages.append(Message.from_json(data))
+                try:
+                    data = json.loads(line)
+                    messages.append(Message.from_json(data))
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.warning("会话 %s 第 %d 行解析失败，跳过: %s", session_id, line_num, e)
         return messages
 
     def list_sessions(self) -> list[str]:
@@ -458,6 +497,8 @@ class SessionStore:
         old_path = self._resolve_path(old_id)
         new_id = new_name
         new_path = self._session_path(new_id)
+        if new_path.exists():
+            raise ValueError(f"目标会话名已存在: {new_id}")
         old_path.rename(new_path)
         logger.info(f"会话重命名: {old_id} -> {new_id}")
         return new_id

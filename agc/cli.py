@@ -51,8 +51,15 @@ def main(
 
 def _load_config(path: Path) -> dict:
     """加载YAML配置文件"""
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        typer.echo(f"配置文件语法错误: {e}")
+        raise typer.Exit(1) from None
+    except OSError as e:
+        typer.echo(f"无法读取配置文件: {e}")
+        raise typer.Exit(1) from None
 
 
 def _build_agents(config: dict) -> list[AgentConfig]:
@@ -82,33 +89,29 @@ def _safe_log_id(text: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", text)[:50]
 
 
-_DEFAULT_AGENTS = [
-    {
-        "name": "researcher",
-        "role": "资深研究员",
-        "goal": "深入调研问题，提供信息支撑，善于发现关键细节",
-        "backstory": "你是一位严谨的研究员，擅长搜索和整理信息。你总是先搞清楚问题的全貌，再让别人介入讨论。你会用数据和事实说话，不凭直觉下结论。",
-    },
-    {
-        "name": "architect",
-        "role": "系统架构师",
-        "goal": "设计方案，评估可行性和风险，做出权衡取舍",
-        "backstory": "你有10年架构经验，善于权衡取舍。你会指出别人忽略的边界条件和系统风险。你倾向简洁可靠的方案，而不是过度设计。",
-    },
-    {
-        "name": "reviewer",
-        "role": "魔鬼代言人",
-        "goal": "质疑和验证结论，防止团队思维和共识谬误",
-        "backstory": "你天生怀疑一切，不轻易认同。你总是找反例和漏洞，逼迫团队思考得更深入。你的价值在于别人都同意时你说'等等，万一呢？'",
-    },
-]
+def _wire_display(session, display) -> None:
+    """统一注册 display 回调到 session，避免两个命令间重复 wiring。"""
+    session.on_message(display.on_message)
+    session.on_chunk(display.on_chunk)
+    session.on_speaker_start(display.begin_stream)
+    session.on_reasoning(display.on_reasoning_chunk)
+    session.on_tool_batch(display.flush_tool_status)
+
+
+_DEFAULT_AGENT_NAMES = ["researcher", "architect", "reviewer"]
 
 
 def _make_default_agents(model: str, tool_names: list[str]) -> list[AgentConfig]:
-    return [
-        AgentConfig(**a, model=model, tools=tool_names if tool_names else [])
-        for a in _DEFAULT_AGENTS
-    ]
+    """从 templates 模块构建默认 Agent 列表，避免硬编码重复。"""
+    from agc.templates import TEMPLATES
+
+    agents = []
+    for name in _DEFAULT_AGENT_NAMES:
+        cfg = dict(TEMPLATES[name]["config"])
+        cfg["model"] = model
+        cfg["tools"] = tool_names if tool_names else []
+        agents.append(AgentConfig(**cfg))
+    return agents
 
 
 def _save_topic_session(topic: str, result) -> None:
@@ -127,8 +130,11 @@ def _save_topic_session(topic: str, result) -> None:
         "summary": result.summary,
         "message_count": len(result.messages),
     }
-    with open(sessions_dir / filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(sessions_dir / filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        typer.echo(f"会话总结保存失败: {e}")
 
 
 @app.command()
@@ -224,17 +230,26 @@ def topic(
     from agc.ui import CliDisplay
 
     display = CliDisplay()
-    room.on_message(display.on_message)
-    room.on_chunk(display.on_chunk)
-    room.on_speaker_start(display.begin_stream)
-    room.on_reasoning(display.on_reasoning_chunk)
-    room.on_tool_batch(display.flush_tool_status)
+    _wire_display(room, display)
     display.print_header(topic, agents, human_loop=human_loop)
     result = room.chat(topic)
     display.print_result(result)
 
     # 保存会话总结
     _save_topic_session(topic, result)
+
+    # 交互式追问循环：讨论结束后可以继续追问
+    while True:
+        try:
+            follow_up = input("\n输入追问继续讨论，或按 Enter 退出: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not follow_up:
+            break
+
+        result = room.continue_chat(follow_up)
+        display.print_result(result)
+        _save_topic_session(topic, result)
 
 
 @app.command()
@@ -252,6 +267,9 @@ def room(
     search: str = typer.Option("duckduckgo", "--search", help="搜索后端: duckduckgo"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="工作空间目录"),
     user_name: str = typer.Option("human", "--user-name", help="人类用户在群聊中的名字"),
+    recent_window: int = typer.Option(
+        50, "--recent-window", help="上下文滑动窗口大小（最近N条消息），长会话自动摘要压缩"
+    ),
     log_level: str = typer.Option("INFO", "--log-level", help="日志级别: DEBUG/INFO/WARNING/ERROR"),
     log_dir: str = typer.Option("data/logs", "--log-dir", help="日志目录"),
     no_llm_route: bool = typer.Option(
@@ -325,17 +343,14 @@ def room(
         session_id=session_id,
         session_store=store,
         use_llm_route=not no_llm_route,
+        recent_window=recent_window,
     )
 
     # 设置显示
     from agc.ui import CliDisplay
 
     display = CliDisplay()
-    session.on_message(display.on_message)
-    session.on_chunk(display.on_chunk)
-    session.on_speaker_start(display.begin_stream)
-    session.on_reasoning(display.on_reasoning_chunk)
-    session.on_tool_batch(display.flush_tool_status)
+    _wire_display(session, display)
     session._display = display
 
     if resume and session_id:
@@ -387,6 +402,108 @@ def register_preview_tools() -> None:
         register_tool(WebFetchTool())
     if "web_search" not in _REGISTRY:
         register_tool(DuckDuckGoSearchTool())
+
+
+@app.command(name="sessions")
+def sessions(
+    list_all: bool = typer.Option(False, "--list", "-l", help="列出所有会话"),
+    delete: str | None = typer.Option(None, "--delete", "-d", help="删除会话（前缀匹配）"),
+    rename_old: str | None = typer.Option(None, "--rename", help="重命名会话（旧名/前缀）"),
+    rename_new: str | None = typer.Option(None, "--to", help="重命名的新名称"),
+):
+    """管理已保存的会话（话题讨论 + 自由群聊）"""
+
+    topics_dir = DEFAULT_SESSIONS_DIR / "topics"
+    freechat_store = SessionStore(DEFAULT_SESSIONS_DIR / "freechat")
+
+    def _list_topic_sessions() -> list[str]:
+        if not topics_dir.exists():
+            return []
+        return sorted(f.stem for f in topics_dir.glob("*.json"))
+
+    def _find_topic_session(prefix: str) -> Path | None:
+        if not topics_dir.exists():
+            return None
+        matches = list(topics_dir.glob(f"{prefix}*.json"))
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            typer.echo(f"前缀 '{prefix}' 匹配到多个话题会话: {[m.stem for m in matches]}")
+        return None
+
+    # --list
+    if list_all:
+        topic_sessions = _list_topic_sessions()
+        freechat_sessions = freechat_store.list_sessions()
+
+        if not topic_sessions and not freechat_sessions:
+            typer.echo("暂无保存的会话。")
+            return
+
+        if topic_sessions:
+            typer.echo("话题讨论会话 (topics):")
+            for s in topic_sessions:
+                typer.echo(f"  {s}")
+        if freechat_sessions:
+            typer.echo("自由群聊会话 (freechat):")
+            for s in freechat_sessions:
+                typer.echo(f"  {s}")
+        return
+
+    # --delete
+    if delete:
+        # 尝试话题会话
+        topic_path = _find_topic_session(delete)
+        if topic_path:
+            try:
+                topic_path.unlink()
+                typer.echo(f"已删除话题会话: {topic_path.stem}")
+            except OSError as e:
+                typer.echo(f"删除失败: {e}")
+            return
+
+        # 尝试自由群聊会话
+        try:
+            fc_path = freechat_store._resolve_path(delete)
+            if not fc_path.exists():
+                typer.echo(f"未找到会话 '{delete}'")
+                return
+            freechat_store.delete_session(delete)
+            typer.echo(f"已删除自由群聊会话: {delete}")
+        except Exception as e:
+            typer.echo(f"未找到会话 '{delete}': {e}")
+        return
+
+    # --rename
+    if rename_old:
+        if not rename_new:
+            typer.echo("请指定新名称: --to <新名称>")
+            raise typer.Exit(1)
+
+        # 自由群聊会话支持 rename
+        try:
+            new_id = freechat_store.rename_session(rename_old, rename_new)
+            typer.echo(f"已重命名: {rename_old} → {new_id}")
+            return
+        except Exception:
+            pass  # 不是 freechat 会话，尝试 topic
+
+        # 话题会话 rename
+        topic_path = _find_topic_session(rename_old)
+        if topic_path:
+            new_path = topics_dir / f"{rename_new}.json"
+            try:
+                topic_path.rename(new_path)
+                typer.echo(f"已重命名: {topic_path.stem} → {rename_new}")
+            except OSError as e:
+                typer.echo(f"重命名失败: {e}")
+            return
+
+        typer.echo(f"未找到会话 '{rename_old}'")
+        return
+
+    # 无参数时显示帮助
+    typer.echo("用法: agc sessions --list | --delete <前缀> | --rename <旧名> --to <新名>")
 
 
 if __name__ == "__main__":

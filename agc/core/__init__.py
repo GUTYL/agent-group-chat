@@ -1,7 +1,7 @@
 """核心数据模型"""
 
 from .agent import AgentConfig
-from .chatroom import ChatResult, RoomConfig, TopicSession
+from .chatroom import ChatResult, ChatRoom, RoomConfig, TopicSession
 from .freechat import FreeChatSession
 from .human_in_loop import HumanInTheLoop, HumanMode
 from .message import Message, MessageType
@@ -17,6 +17,7 @@ __all__ = [
     "SessionStore",
     "FreeChatSession",
     "TopicSession",
+    "ChatRoom",
     "ChatResult",
     "Workspace",
     "WorkspaceManager",

@@ -286,7 +286,7 @@ agc/
 
 ```bash
 uv sync --extra dev          # 安装所有依赖
-uv run pytest tests/ -v       # 运行全部 96 个测试
+uv run pytest tests/ -v       # 运行全部 137 个测试
 uv run pytest tests/test_message.py::test_message_to_json -v  # 单个测试
 ```
 

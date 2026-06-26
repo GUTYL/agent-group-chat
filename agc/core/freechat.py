@@ -37,6 +37,8 @@ SLASH_COMMANDS = {
     "/agents": "列出群中的agent",
     "/topic": "设置当前话题语境",
     "/clear": "清空当前会话历史",
+    "/export": "导出对话记录到文件 (/export [路径])",
+    "/tokens": "查看当前会话已消耗的token数",
     "/help": "显示所有命令",
 }
 
@@ -60,8 +62,9 @@ class FreeChatSession(ChatSession):
         scheduler: str = "hybrid",
         session_id: str | None = None,
         session_store: SessionStore | None = None,
-        recent_window: int = 30,
+        recent_window: int = 50,
         use_llm_route: bool = True,
+        cold_storage_threshold: int = 200,
     ):
         super().__init__(
             agents=agents,
@@ -80,6 +83,7 @@ class FreeChatSession(ChatSession):
         self.session_id = session_id or ""
         self._session_store = session_store or SessionStore(DEFAULT_SESSIONS_DIR / "freechat")
         self._recent_window = recent_window
+        self._cold_storage_threshold = cold_storage_threshold
         self._system_prompts: dict[str, str] = {}
         self._named = False
         self._total_tokens = 0
@@ -138,29 +142,41 @@ class FreeChatSession(ChatSession):
 
                 round_msgs = [user_msg]
                 # 首轮：让 scheduler 选出该回的 agent
-                for agent in response_plan:
-                    self._emit_speaker_start(agent.name, agent.role, agent.model)
-                    agent_msgs, tokens = self._generate_response(agent)
-                    round_msgs.extend(agent_msgs)
-                    self._total_tokens += tokens
-
-                # 自动延续：agent @mention 其他人时，继续让被@的agent回应
-                for _ in range(AUTO_CONTINUE_MAX):
-                    last_msg = self.history[-1] if self.history else None
-                    if not last_msg or not last_msg.has_mentions:
-                        break
-                    extra_plan = self._scheduler.plan_responses(self.history)
-                    if not extra_plan:
-                        break
-                    for agent in extra_plan:
+                try:
+                    for agent in response_plan:
                         self._emit_speaker_start(agent.name, agent.role, agent.model)
                         agent_msgs, tokens = self._generate_response(agent)
                         round_msgs.extend(agent_msgs)
                         self._total_tokens += tokens
 
-                self._session_store.append(self.session_id, round_msgs)
+                    # 自动延续：agent @mention 其他人时，继续让被@的agent回应
+                    for _ in range(AUTO_CONTINUE_MAX):
+                        last_msg = self.history[-1] if self.history else None
+                        if not last_msg or not last_msg.has_mentions:
+                            break
+                        extra_plan = self._scheduler.plan_responses(self.history)
+                        if not extra_plan:
+                            break
+                        for agent in extra_plan:
+                            self._emit_speaker_start(agent.name, agent.role, agent.model)
+                            agent_msgs, tokens = self._generate_response(agent)
+                            round_msgs.extend(agent_msgs)
+                            self._total_tokens += tokens
+                except KeyboardInterrupt:
+                    if self._display:
+                        self._display.show_info("\n⚠️ 响应已中断，回到聊天界面")
+                    logger.info("响应被用户中断 session_id=%s", self.session_id)
+                    continue
+
+                # 先标记再写入：写入失败时回滚标记，避免崩溃后重复写入
                 for m in round_msgs:
                     m.metadata["_saved"] = True
+                try:
+                    self._session_store.append(self.session_id, round_msgs)
+                except Exception:
+                    for m in round_msgs:
+                        m.metadata["_saved"] = False
+                    raise
         finally:
             if self.session_id and not self.history:
                 self._session_store.delete_session(self.session_id)
@@ -218,29 +234,8 @@ class FreeChatSession(ChatSession):
             system_prompt=self._system_prompts.get(agent.name, ""),
             current_topic=self.current_topic,
             recent_window=self._recent_window,
+            cold_storage_threshold=self._cold_storage_threshold,
         )
-
-    def _force_text_response_fallback(
-        self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
-    ) -> None:
-        """强制无工具回复"""
-        try:
-            ctx = self._build_response_context(agent, result_messages)
-            llm = self._llm_clients.get(agent.name, self.llm)
-            response = llm.chat(
-                messages=ctx,
-                model=agent.model,
-                temperature=agent.temperature,
-                tools=None,
-                on_chunk=self._emit_chunk if self._stream else None,
-                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
-            )
-            final_msg = self._create_final_message(agent, response, self._current_round())
-            if emit_final:
-                self._emit_message(final_msg)
-            result_messages.append(final_msg)
-        except Exception as e:
-            logger.warning(f"强制无工具回复失败: {e}")
 
     def _handle_command(self, raw_input: str) -> str | None:
         """处理斜杠命令，返回 'quit' 表示退出"""
@@ -291,6 +286,17 @@ class FreeChatSession(ChatSession):
             self._emit_system("会话历史已清空")
             return None
 
+        if cmd == "/tokens":
+            if self._display:
+                self._display.show_info(
+                    f"当前会话已消耗 token: [bold]{self._total_tokens:,}[/bold]"
+                )
+            return None
+
+        if cmd == "/export":
+            self._export_conversation(args)
+            return None
+
         if self._display:
             self._display.show_info(f"[yellow]未知命令: {cmd}[/yellow]  输入 /help 查看帮助")
         return None
@@ -306,6 +312,39 @@ class FreeChatSession(ChatSession):
     def _show_agents(self) -> None:
         if self._display:
             self._display.show_agents(self.agents)
+
+    def _export_conversation(self, path: str) -> None:
+        """导出对话历史到文件"""
+        if not path:
+            from agc import DEFAULT_DATA_DIR
+
+            export_dir = DEFAULT_DATA_DIR / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            path = str(export_dir / f"{self.session_id}.txt")
+
+        lines = [f"AGC 自由群聊导出 — 会话: {self.session_id}", "=" * 60, ""]
+        for msg in self.history:
+            if msg.msg_type == MessageType.tool_call:
+                tool_names = [tc["function"]["name"] for tc in (msg.tool_calls or [])]
+                lines.append(f"[{msg.sender}] 🔧 调用工具: {', '.join(tool_names)}")
+            elif msg.msg_type == MessageType.tool_result:
+                tool = msg.metadata.get("tool_name", "?")
+                ok = msg.metadata.get("tool_success", True)
+                lines.append(f"[tool:{tool}] {'✅' if ok else '❌'} {msg.content[:200]}")
+            elif msg.msg_type == MessageType.system:
+                lines.append(f"── {msg.content} ──")
+            else:
+                lines.append(f"[{msg.sender}]: {msg.content}")
+            lines.append("")
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            if self._display:
+                self._display.show_info(f"✅ 对话已导出到: {path} ({len(self.history)} 条消息)")
+        except OSError as e:
+            if self._display:
+                self._display.show_info(f"❌ 导出失败: {e}")
 
     def _try_name_session(self, user_input: str) -> None:
         """尝试用LLM给会话命名"""
@@ -336,7 +375,7 @@ class FreeChatSession(ChatSession):
                 temperature=0.0,
             )
             name = (response.content or response.reasoning_content or "").strip()
-            name = re.sub(r'["""\n\r]', "", name)
+            name = re.sub(r'[\\/:*?"<>|\n\r]', "", name)
             return name[:20]
         except Exception:
             return ""
@@ -346,9 +385,15 @@ class FreeChatSession(ChatSession):
         if self.session_id and self.history:
             unsaved = [m for m in self.history if not m.metadata.get("_saved", False)]
             if unsaved:
-                self._session_store.append(self.session_id, unsaved)
+                # 先标记再写入：写入失败时回滚标记，避免崩溃后重复写入
                 for m in unsaved:
                     m.metadata["_saved"] = True
+                try:
+                    self._session_store.append(self.session_id, unsaved)
+                except Exception:
+                    for m in unsaved:
+                        m.metadata["_saved"] = False
+                    raise
 
     def load_session(self, session_id: str) -> None:
         """加载历史会话"""

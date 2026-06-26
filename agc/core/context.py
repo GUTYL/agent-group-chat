@@ -74,9 +74,10 @@ class ContextManager:
         all_agents: list[AgentConfig],
         system_prompt: str,
         current_topic: str | None = None,
-        recent_window: int = 30,
+        recent_window: int = 50,
+        cold_storage_threshold: int = 200,
     ) -> list[dict[str, Any]]:
-        """构建FreeChat模式的上下文（滑动窗口，无需总结压缩）"""
+        """构建FreeChat模式的上下文（滑动窗口 + 长会话摘要压缩）"""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -93,6 +94,19 @@ class ContextManager:
         start = max(0, len(filtered) - recent_window)
         start = self._adjust_for_tool_pairs(filtered, start)
         recent = filtered[start:]
+        older = filtered[:start]
+
+        # 长会话压缩：当被丢弃的消息超过阈值时，生成摘要注入上下文
+        if len(older) >= cold_storage_threshold:
+            bucket = len(older) // 50
+            cache_key = f"{older[0].id}-{bucket}" if older else ""
+            summary = self._summary_cache.get(cache_key) if cache_key else ""
+            if older and not summary:
+                summary = self._summarize(older)
+                if cache_key:
+                    self._summary_cache[cache_key] = summary
+            if summary:
+                messages.append({"role": "system", "content": f"[之前的讨论摘要]\n{summary}"})
 
         for msg in recent:
             messages.append(msg.to_openai_msg())

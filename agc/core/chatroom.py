@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -100,6 +99,7 @@ class TopicSession(ChatSession):
             ]
         )
         self._max_rounds = max_rounds
+        self._current_topic = ""
 
     # ── Main loop ──────────────────────────────────────────
 
@@ -118,42 +118,7 @@ class TopicSession(ChatSession):
             len(self.agents),
             self._max_rounds,
         )
-        round_idx = 0
-        total_tokens = 0
-
-        while True:
-            speaker = self._scheduler.next_speaker(self.history, round_idx)
-            if self._speaker_exhausted(speaker):
-                if self._all_exhausted():
-                    self._emit_system("所有参与者已达到发言上限，讨论结束。")
-                    logger.info(
-                        "话题讨论结束 reason=all_exhausted rounds=%d tokens=%d",
-                        round_idx,
-                        total_tokens,
-                    )
-                    break
-                round_idx += 1
-                continue
-
-            self._emit_speaker_start(speaker.name, speaker.role, speaker.model)
-            messages, tokens = self._generate_response(speaker, topic)
-            self._process_messages(messages, speaker.name, tokens)
-            total_tokens += tokens
-
-            if self._handle_human_pause(round_idx, speaker.name):
-                logger.info(
-                    "话题讨论结束 reason=human_stop rounds=%d tokens=%d", round_idx, total_tokens
-                )
-                break
-
-            if self._check_termination():
-                logger.info(
-                    "话题讨论结束 reason=terminator rounds=%d tokens=%d", round_idx, total_tokens
-                )
-                break
-
-            round_idx += 1
-
+        round_idx, total_tokens, stop_reason = self._run_loop(start_round=0)
         summary = self._generate_summary(topic)
         logger.info("话题讨论完成 summary_len=%d total_tokens=%d", len(summary), total_tokens)
         return ChatResult(
@@ -162,8 +127,98 @@ class TopicSession(ChatSession):
             summary=summary,
             total_tokens=total_tokens,
             rounds=round_idx,
-            stop_reason=self.history[-1].content if self.history else "",
+            stop_reason=stop_reason,
         )
+
+    def continue_chat(self, user_message: str) -> ChatResult:
+        """从当前历史继续讨论，注入用户追问。不重置状态。
+
+        适用于 chat() 结束后，用户想追问或继续讨论的场景。
+        """
+        if not self._current_topic:
+            self._current_topic = "继续讨论"
+
+        self._emit_system(f"用户追问: {user_message}")
+        logger.info("继续讨论 user_msg=%s...", user_message[:50])
+
+        # 重置终止器：延续讨论时，max_rounds 需要叠加已有轮次，
+        # 否则 MaxRoundsTerminator 会因 len(history) 已超阈值而立即终止
+        prior_rounds = len(self.history) // max(len(self.agents), 1)
+        self._terminator = CompositeTerminator(
+            [
+                ConsensusTerminator(window=3, threshold=2.0),
+                MaxRoundsTerminator(max_rounds=self._max_rounds + prior_rounds),
+            ]
+        )
+
+        start_round = self._current_round()
+        round_idx, total_tokens, stop_reason = self._run_loop(start_round=start_round)
+
+        summary = self._generate_summary(self._current_topic)
+        logger.info("继续讨论完成 summary_len=%d total_tokens=%d", len(summary), total_tokens)
+        return ChatResult(
+            topic=self._current_topic,
+            messages=self.history,
+            summary=summary,
+            total_tokens=total_tokens,
+            rounds=round_idx,
+            stop_reason=stop_reason,
+        )
+
+    def _run_loop(self, start_round: int = 0) -> tuple[int, int, str]:
+        """运行讨论主循环，返回 (round_idx, total_tokens, stop_reason)。"""
+        round_idx = start_round
+        total_tokens = 0
+        stop_reason = ""
+
+        try:
+            while True:
+                speaker = self._scheduler.next_speaker(self.history, round_idx)
+                if self._speaker_exhausted(speaker):
+                    if self._all_exhausted():
+                        self._emit_system("所有参与者已达到发言上限，讨论结束。")
+                        stop_reason = "all_exhausted"
+                        logger.info(
+                            "话题讨论结束 reason=all_exhausted rounds=%d tokens=%d",
+                            round_idx,
+                            total_tokens,
+                        )
+                        break
+                    round_idx += 1
+                    continue
+
+                self._emit_speaker_start(speaker.name, speaker.role, speaker.model)
+                messages, tokens = self._generate_response(speaker, self._current_topic)
+                self._process_messages(messages, speaker.name, tokens)
+                total_tokens += tokens
+
+                if self._handle_human_pause(round_idx, speaker.name):
+                    stop_reason = "human_stop"
+                    logger.info(
+                        "话题讨论结束 reason=human_stop rounds=%d tokens=%d",
+                        round_idx,
+                        total_tokens,
+                    )
+                    break
+
+                if self._check_termination():
+                    stop_reason = "terminator"
+                    logger.info(
+                        "话题讨论结束 reason=terminator rounds=%d tokens=%d",
+                        round_idx,
+                        total_tokens,
+                    )
+                    break
+
+                round_idx += 1
+        except KeyboardInterrupt:
+            self._emit_system("讨论被用户中断")
+            stop_reason = "interrupted"
+            logger.info(
+                "话题讨论结束 reason=interrupted rounds=%d tokens=%d", round_idx, total_tokens
+            )
+
+        return round_idx, total_tokens, stop_reason
 
     def _reset_state(self) -> None:
         self.history = []
@@ -241,31 +296,11 @@ class TopicSession(ChatSession):
             ctx.append(rm.to_openai_msg())
         return ctx
 
-    def _force_text_response_fallback(
-        self, agent: AgentConfig, result_messages: list[Message], emit_final: bool
-    ) -> None:
-        try:
-            ctx = self._build_response_context(agent, result_messages)
-            llm = self._llm_clients.get(agent.name, self.llm)
-            response = llm.chat(
-                messages=ctx,
-                model=agent.model,
-                temperature=agent.temperature,
-                tools=None,
-                on_chunk=self._emit_chunk if self._stream else None,
-                on_reasoning_chunk=self._emit_reasoning if self._stream else None,
-            )
-            result_messages.append(
-                self._create_final_message(agent, response, self._current_round())
-            )
-        except Exception as e:
-            logger.warning(f"强制无工具回复失败: {e}")
-
-    def _parse_mentions(self, content: str) -> list[str]:
-        agent_names = {a.name for a in self.agents}
+    def _mentionable_names(self) -> set[str]:
+        names = super()._mentionable_names()
         if self._human:
-            agent_names.add(self._human.name)
-        return [m for m in re.findall(r"@(\w+)", content) if m in agent_names]
+            names.add(self._human.name)
+        return names
 
     # ── Summary ────────────────────────────────────────────
 
@@ -300,3 +335,6 @@ class TopicSession(ChatSession):
         except Exception as e:
             logger.warning(f"总结生成失败: {e}")
             return "（总结生成失败）"
+
+
+ChatRoom = TopicSession
